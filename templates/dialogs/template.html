@@ -1,0 +1,12 @@
+{% extends "dialogs/_modal.html" %}
+{% block size %}lg{% endblock %}{% block label %}Template {{ t.name }}{% endblock %}
+{% block mtitle %}Template · {{ t.name }}{% endblock %}{% block msub %}<p>{{ tid }} · from {{ t.src }}</p>{% endblock %}
+{% block mbody %}
+<div class="tw"><table class="dt compact"><thead><tr><th>Column</th><th>Required</th><th>Also accepted as</th><th>Type</th></tr></thead><tbody>
+{% for c in cols %}<tr><td class="mono">{{ c.f }}</td><td>{% if c.req %}{% chip "Required" "pri" %}{% else %}{% chip "Optional" %}{% endif %}</td><td class="small muted">{{ c.syn }}</td><td>{{ c.kind }}</td></tr>{% endfor %}</tbody></table></div>
+<div class="field"><label for="tpl-csv">Example CSV</label><textarea class="inp pre" id="tpl-csv" rows="7" readonly>{{ csv }}</textarea></div>
+{% endblock %}
+{% block mfoot %}<span class="hint">Excel files work too. Keep one header row.</span>
+<button type="button" class="btn" data-copy="tpl-csv">{% icon 'copy' %}<span>Copy CSV</span></button>
+<a class="btn" href="/uploads/template/{{ tid }}.csv" download>{% icon 'download' %}<span>Download</span></a>
+<button type="button" class="btn pri" hx-get="/uploads/new/?type={{ tid }}" hx-target="#modal" {% perm 'upload' %}>{% if back %}Back to upload{% else %}Upload this type{% endif %}</button>{% endblock %}

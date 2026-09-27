@@ -1,0 +1,7 @@
+{% extends "dialogs/_modal.html" %}
+{% block size %}sm{% endblock %}{% block mtitle %}Link deduction to a debit note{% endblock %}{% block msub %}<p>{{ p.deduction_h|sar }} on invoice {{ p.invoice_ref }}</p>{% endblock %}
+{% block form_open %}<form hx-post="/pay/{{ p.payment_no }}/link-dn/" hx-swap="none">{% endblock %}
+{% block mbody %}<p class="muted">Amazon often recovers promo support by deducting it from a payment. Linking shows the deduction is already covered by a validated debit note.</p>
+<div class="field"><label for="ld-sel">Debit note</label><select class="sel" id="ld-sel" name="dn_no">{% for d in dns %}<option value="{{ d.dn_no }}">{{ d.dn_no }} · {{ d.approved_h|sar }} · agreement {{ d.agreement_no }}</option>{% endfor %}</select></div>{% endblock %}
+{% block mfoot %}<span class="hint"></span><button type="button" class="btn" data-close="modal">Cancel</button><button class="btn pri" type="submit">Link</button>{% endblock %}
+{% block form_close %}</form>{% endblock %}

@@ -1,0 +1,2 @@
+{% if events %}<div class="tl">{% for e in events %}<div class="tl-i {% if e.system %}sys{% endif %}"><span class="d"></span><div><p>{{ e.text }}</p><small>{{ e.actor_name }} · {{ e.at|fdt }}</small></div></div>{% endfor %}</div>
+{% else %}<div class="empty"><div class="ei">{% icon 'inbox' %}</div><b>No activity yet</b><span>Actions on this record will appear here.</span></div>{% endif %}

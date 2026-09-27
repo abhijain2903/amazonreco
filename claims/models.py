@@ -1,0 +1,29 @@
+from django.db import models
+
+from core.models import Base
+from debitnotes.models import DebitNote
+from promotions.models import Promotion
+
+CLAIM_STATUS = [("sent", "Waiting for CN"), ("closed", "Closed"), ("shortfall", "CN shortfall"),
+                ("written_off", "Written off")]
+
+
+class Claim(Base):
+    """Sell-out claim to the product team, and the credit note that settles it."""
+
+    claim_no = models.CharField(max_length=20, unique=True)
+    promotion = models.ForeignKey(Promotion, on_delete=models.PROTECT, related_name="claims")
+    debit_note = models.ForeignKey(DebitNote, on_delete=models.PROTECT, related_name="claims")
+    amount_h = models.BigIntegerField()
+    sent_at = models.DateTimeField()
+    status = models.CharField(max_length=12, choices=CLAIM_STATUS, default="sent", db_index=True)
+    cn_no = models.CharField(max_length=30, blank=True)
+    cn_h = models.BigIntegerField(null=True, blank=True)
+    cn_date = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-sent_at"]
+
+    @property
+    def gap_h(self):
+        return None if self.cn_h is None else self.amount_h - self.cn_h

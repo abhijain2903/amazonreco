@@ -1,0 +1,11 @@
+{% load static %}<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>Sign in · ME Vendor Hub</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="{% static 'css/hub.css' %}"></head>
+<body><div class="login-w"><div class="login">
+<div class="brand" style="padding:0"><div class="logo">ME</div><div><b>Vendor Hub</b><span>Amazon · Saudi Arabia</span></div></div>
+<h1>Sign in</h1>
+{% if oidc %}<a class="btn pri" href="/oidc/authenticate/">Sign in with your company account</a>{% endif %}
+{% if dev %}<p class="muted small">Development sign-in. Pick a person to see their role's view. This page is switched off in production.</p>
+<form method="post" class="userpick">{% csrf_token %}{% for u in users %}<button name="user" value="{{ u.username }}"><span class="av">{{ u.initials }}</span><span><b>{{ u.name }}</b><small>{{ u.role_title }}</small></span></button>{% empty %}<p class="muted">No users yet. Run <span class="mono">python manage.py seed_demo</span>.</p>{% endfor %}</form>{% endif %}
+{% if not oidc and not dev %}<p class="muted">Sign-in is not configured. Set the OIDC_* environment variables.</p>{% endif %}
+</div></div></body></html>

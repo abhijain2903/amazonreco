@@ -1,0 +1,12 @@
+<div class="totals"><div><span>Expected (sold × agreed support)</span><b>{{ ev.expected_h|sar }}</b></div><div><span>Charged by Amazon</span><b>{{ ev.charged_h|sar }}</b></div>
+<div><span>Variance</span><b class="{% if var_bad %}bad-t{% else %}ok-t{% endif %}">{{ ev.variance_h|signed }} SAR</b></div></div>
+<div class="split">
+  <div class="pane"><div class="pane-h">Agreement {{ p.agreement_no }}</div><div class="tw" style="border:0;border-radius:0"><table class="dt compact"><thead><tr><th>Model</th><th class="num">Support</th><th class="num">Sold</th><th class="num">SAR</th></tr></thead><tbody>
+  {% for l in lines %}<tr><td>{{ l.sku.model_no }}</td><td class="num">{{ l.support_h|n2 }}</td><td class="num">{% if l.sold_units is None %}—{% else %}{{ l.sold_units|num }}{% endif %}</td><td class="num">{{ l.sold_units|mul:l.support_h|n }}</td></tr>{% endfor %}</tbody></table></div></div>
+  <div class="pane"><div class="pane-h">Debit note {{ dn.dn_no }}</div><div class="tw" style="border:0;border-radius:0"><table class="dt compact"><thead><tr><th>Model</th><th class="num">Rate</th><th class="num">Units</th><th class="num">SAR</th></tr></thead><tbody>
+  {% for l in ev.lines %}<tr class="{% if l.bad %}err{% endif %}"><td>{{ l.sku_obj.model_no }}</td><td class="num {% if not l.rate_ok %}bad-t{% endif %}">{{ l.rate_h|n2 }}</td><td class="num {% if not l.units_ok %}bad-t{% endif %}">{{ l.units|num }}</td><td class="num">{{ l.charged_h|n }}</td></tr>{% endfor %}</tbody></table></div></div>
+</div>
+<h3 class="sect-h">Checks (R10)</h3>
+{% include "partials/checks.html" %}
+{% if dn.validated %}<div class="banner {% if dn.disputed_h %}info{% else %}ok{% endif %}">{% if dn.disputed_h %}{% icon 'info' %}<span class="t"><b>Validated with a dispute.</b> {{ dn.approved_h|sar }} approved, {{ dn.disputed_h|sar }} disputed with Amazon.</span>
+{% else %}{% icon 'check' %}<span class="t"><b>Validated</b> {{ dn.validated_at|fd }}{% if dn.override_reason %} with override: {{ dn.override_reason }}{% endif %}.</span>{% endif %}</div>{% endif %}

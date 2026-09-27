@@ -1,0 +1,12 @@
+{% extends "dialogs/_modal.html" %}
+{% block size %}sm{% endblock %}{% block label %}Record credit note{% endblock %}
+{% block mtitle %}Record credit note{% endblock %}{% block msub %}<p>Claim {{ c.claim_no }} · {{ c.amount_h|sar }}</p>{% endblock %}
+{% block form_open %}<form hx-post="/claims/{{ c.claim_no }}/cn/" hx-swap="none">{% endblock %}
+{% block mbody %}
+<div class="fgrid"><div class="field"><label for="cn-no">Credit note #</label><input class="inp" id="cn-no" name="cn_no" value="{{ next_cn }}" required></div>
+<div class="field"><label for="cn-amt">Amount SAR</label><input class="inp" type="number" step="0.01" min="0" id="cn-amt" name="amount" value="{{ c.amount_h|n2|cut:',' }}" required></div>
+<div class="field"><label for="cn-date">Date</label><input class="inp" type="date" id="cn-date" name="date" value="{{ today }}"></div></div>
+<p class="small muted">R11 compares the credit note with the claim. A gap above {{ tol|sar }} is flagged as a shortfall.</p>
+{% endblock %}
+{% block mfoot %}<span class="hint"></span><button type="button" class="btn" data-close="modal">Cancel</button><button class="btn pri" type="submit">Record credit note</button>{% endblock %}
+{% block form_close %}</form>{% endblock %}

@@ -1,0 +1,9 @@
+<div class="brand"><div class="logo">ME</div><div><b>Vendor Hub</b><span>Amazon · Saudi Arabia</span></div></div>
+{% nav_menu path as menu %}
+{% for g in menu %}<nav class="nav-g" aria-label="{{ g.group }}"><div>{{ g.group }}</div>
+{% for i in g.items %}<a class="nav-i {% if i.on %}on{% endif %}" href="{{ i.url }}" data-close="menu">{% icon i.icon %}<span>{{ i.label }}</span>{% if i.badge %}<span class="bdg {% if i.hot %}hot{% endif %}">{{ i.badge }}</span>{% endif %}</a>{% endfor %}
+</nav>{% endfor %}
+<div class="side-foot">
+  {% if demo %}<div class="proto"><i></i><span>Demo mode: SAP and Amazon steps are simulated so every flow can be clicked through.</span></div>{% endif %}
+  <a class="btn sm ghost" href="/admin/" hx-boost="false">{% icon 'sliders' %}<span>Admin console</span></a>
+</div>

@@ -1,0 +1,43 @@
+# Local / UAT stack: PostgreSQL + web + background worker. Jobs are stored in PostgreSQL (Procrastinate); no Redis.
+#   cp .env.example .env   (then edit)
+#   docker compose up -d --build
+#   docker compose exec web python manage.py seed_demo      # optional example data
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mehub}
+      POSTGRES_USER: ${POSTGRES_USER:-mehub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mehub}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mehub}"]
+      interval: 5s
+      retries: 10
+
+  migrate:
+    build: .
+    env_file: .env
+    command: python manage.py migrate --noinput
+    depends_on: { db: { condition: service_healthy } }
+
+  web:
+    build: .
+    env_file: .env
+    ports: ["8000:8000"]
+    volumes: [media:/data/media]
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 30s
+
+  worker:
+    build: .
+    env_file: .env
+    command: python manage.py procrastinate worker
+    volumes: [media:/data/media]
+    depends_on: { migrate: { condition: service_completed_successfully } }
+
+volumes:
+  pgdata:
+  media:

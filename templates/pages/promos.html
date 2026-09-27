@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="ph"><div><h1>Promotions</h1><p>The promotion tracker: from the product team's request to the credit note. Replaces the Excel tracker.</p></div>
+<div class="ph-act"><button class="btn" hx-get="/uploads/new/?type=U7" hx-target="#modal" {% perm 'upload' %}>{% icon 'upload' %}<span>Upload promotions</span></button>
+<button class="btn pri" hx-get="/promos/new/" hx-target="#modal" {% perm 'promo' %}>{% icon 'plus' %}<span>New promotion</span></button></div></div>
+<div class="kpis">{% for k in kpis %}<a class="kpi {% if k.alert %}alert{% endif %}" href="{{ k.url }}"><span class="kpi-l">{{ k.l }}</span><span class="kpi-v">{{ k.v }}</span><span class="kpi-s">{{ k.s }}</span></a>{% endfor %}</div>
+{% if view != 'board' %}<div class="tabs" role="tablist">{% for t in tabs %}<a class="tab {% if t.id == tab %}on{% endif %}" href="?tab={{ t.id }}&view={{ view }}&cat={{ cat }}&q={{ q|urlencode }}">{{ t.label }}<span class="ct">{{ t.count }}</span></a>{% endfor %}</div>{% endif %}
+<form class="fbar" hx-get="/promos/" hx-target="#view" hx-select="#view" hx-swap="outerHTML" hx-trigger="input changed delay:300ms from:#pr-q" hx-push-url="true">
+  <input type="hidden" name="tab" value="{{ tab }}"><input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="cat" value="{{ cat }}">
+  <div class="fsearch">{% icon 'search' %}<input class="inp" id="pr-q" name="q" placeholder="Name, MECL ref or agreement #" value="{{ q }}" aria-label="Search promotions"></div>
+  <a class="cchip {% if not cat %}on{% endif %}" href="?tab={{ tab }}&view={{ view }}&q={{ q|urlencode }}">All</a>
+  {% for c in cats %}<a class="cchip {% if cat == c %}on{% endif %}" href="?tab={{ tab }}&view={{ view }}&cat={{ c }}&q={{ q|urlencode }}"><span class="cdot" style="background:{{ c|catcolor }}"></span>{{ c }}</a>{% endfor %}
+  <span class="spacer"></span>
+  <div class="seg" role="group" aria-label="View">
+    <a class="{% if view == 'table' %}on{% endif %}" href="?view=table&tab={{ tab }}&cat={{ cat }}">{% icon 'table' %}Table</a>
+    <a class="{% if view == 'board' %}on{% endif %}" href="?view=board&cat={{ cat }}">{% icon 'board' %}Board</a>
+    <a class="{% if view == 'timeline' %}on{% endif %}" href="?view=timeline&tab={{ tab }}&cat={{ cat }}">{% icon 'cal' %}Timeline</a></div>
+</form>
+
+{% if view == 'board' %}
+<div class="board">{% for col in board %}<div class="bcol"><div class="bcol-h">{% chip col.label col.tone %}<span class="ct">{{ col.n }}</span></div>
+{% for p in col.items %}<button type="button" class="bcard" hx-get="/records/promo/{{ p.mecl_ref }}/" hx-target="#drawer"><div class="r">{% cat p.category %}<span class="mono">{{ p.mecl_ref|slice:"-4:" }}</span></div>
+<b style="font-weight:500;font-size:13px">{{ p.name }}</b><div class="r"><span>{{ p.start|fd }} – {{ p.end|fd }}</span><b class="tnum" style="color:var(--text)">{{ p.support|n }}</b></div></button>{% endfor %}
+{% if col.more %}<div class="bmore">+{{ col.more }} more</div>{% endif %}</div>{% endfor %}</div>
+
+{% elif view == 'timeline' %}
+<div class="gantt"><div class="g-in"><div class="g-head"><div class="g-name">Promotion</div><div class="g-ticks">{% for t in ticks %}<span style="left:{{ t.left|stringformat:'.2f' }}%">{{ t.d|fd }}</span>{% endfor %}</div></div>
+{% for g in gantt %}<div class="g-row" hx-get="/records/promo/{{ g.p.mecl_ref }}/" hx-target="#drawer"><div class="g-name">{% cat g.p.category %} &nbsp;{{ g.p.name }}</div>
+<div class="g-track"><span class="g-today" style="left:{{ today|stringformat:'.2f' }}%"></span><span class="g-bar" style="left:{{ g.left|stringformat:'.2f' }}%;width:{{ g.width|stringformat:'.2f' }}%;background:{{ g.p.category|catcolor }}" title="{{ g.p.name }}: {{ g.p.start|fd }} – {{ g.p.end|fd }}"></span>
+{% if g.dn is not None %}<span class="g-bar" style="left:{{ g.dn|stringformat:'.2f' }}%;width:4px;background:var(--{% if g.p.st == 'dn_overdue' %}bad{% else %}faint{% endif %})" title="DN due {{ g.p.dn_due|fd }}"></span>{% endif %}</div></div>
+{% empty %}<div class="empty"><div class="ei">{% icon 'cal' %}</div><b>No promotions in this window</b><span>Try another category.</span></div>{% endfor %}
+</div></div>
+<p class="small faint" style="margin-top:8px">Red line is today. A thin marker shows when the debit note is due (end date + 30 days).</p>
+
+{% else %}
+{% if rows %}<div class="tw"><table class="dt"><thead><tr><th>MECL ref</th><th>Promotion</th><th>Cat.</th><th>Dates</th><th>Agreement #</th><th class="num">Support SAR</th><th>DN due</th><th>Stage</th></tr></thead><tbody>
+{% for p in rows %}<tr class="click" hx-get="/records/promo/{{ p.mecl_ref }}/" hx-target="#drawer"><td><b class="mono">{{ p.mecl_ref }}</b></td><td>{{ p.name }}</td><td>{% cat p.category %}</td><td>{{ p.start|fd }} – {{ p.end|fd }}</td>
+<td>{% if p.agreement_no %}<span class="mono">{{ p.agreement_no }}</span>{% else %}<span class="faint">—</span>{% endif %}</td><td class="num">{{ p.support|n }}</td>
+<td>{% if p.st in 'approved live waiting_dn dn_overdue' %}<span class="{% if p.st == 'dn_overdue' %}bad-t{% endif %}">{{ p.dn_due|fd }}</span>{% else %}<span class="faint">—</span>{% endif %}</td><td>{% promo_chip p p.st %}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}<div class="tw"><div class="empty"><div class="ei">{% icon 'tag' %}</div><b>No promotions here</b><span>Create one or upload the product team's sheet.</span><button class="btn pri" hx-get="/promos/new/" hx-target="#modal" {% perm 'promo' %}>{% icon 'plus' %}<span>New promotion</span></button></div></div>{% endif %}
+{% endif %}
+{% endblock %}

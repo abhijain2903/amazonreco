@@ -1,0 +1,1 @@
+<div style="margin:2px 0 12px"><div class="stepper">{% for s in steps %}<div class="st {{ s.st }}"><span class="c">{% if s.st == 'done' %}{% icon 'check' %}{% elif s.st == 'fail' %}{% icon 'x' %}{% else %}{{ forloop.counter }}{% endif %}</span><span>{{ s.l }}</span></div>{% endfor %}</div></div>

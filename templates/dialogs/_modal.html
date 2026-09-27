@@ -1,0 +1,9 @@
+<div class="modal-w"><div class="scrim" data-close="modal"></div>
+<div class="modal {% block size %}{% endblock %}" role="dialog" aria-modal="true" aria-label="{% block label %}Dialog{% endblock %}" style="position:relative;z-index:1">
+  <div class="mh"><div style="flex:1"><h2>{% block mtitle %}{% endblock %}</h2>{% block msub %}{% endblock %}</div><button type="button" class="icon-btn" data-close="modal" aria-label="Close">{% icon 'x' %}</button></div>
+  {% block wiz %}{% endblock %}
+  {% block form_open %}{% endblock %}
+  <div class="mb">{% block mbody %}{% endblock %}</div>
+  <div class="mf">{% block mfoot %}{% endblock %}</div>
+  {% block form_close %}{% endblock %}
+</div></div>

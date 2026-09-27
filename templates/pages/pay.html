@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="ph"><div><h1>Payments &amp; Disputes</h1><p>Match what Amazon paid with what ME invoiced. Short payments become dispute cases with a reason and evidence.</p></div>
+<div class="ph-act"><button class="btn" hx-get="/uploads/new/?type=U6" hx-target="#modal" {% perm 'upload' %}>{% icon 'upload' %}<span>Upload remittance</span></button></div></div>
+<div class="kpis">{% for k in kpis %}<a class="kpi {% if k.alert %}alert{% endif %}" href="{{ k.url }}"><span class="kpi-l">{{ k.l }}</span><span class="kpi-v">{{ k.v }}</span><span class="kpi-s">{{ k.s }}</span></a>{% endfor %}</div>
+<div class="tabs" role="tablist">{% for t in tabs %}<a class="tab {% if t.id == tab %}on{% endif %}" href="?tab={{ t.id }}">{{ t.label }}<span class="ct">{{ t.count }}</span></a>{% endfor %}</div>
+{% if tab == 'short' %}
+  {% if short %}<div class="tw"><table class="dt"><thead><tr><th>Payment</th><th>Date</th><th>Invoice #</th><th class="num">Invoice SAR</th><th class="num">Paid SAR</th><th class="num">Short SAR</th><th>Reason from Amazon</th><th></th></tr></thead><tbody>
+  {% for p in short %}<tr class="click" hx-get="/records/po/{{ p.po.po_no }}/?tab=invoice" hx-target="#drawer"><td class="mono">{{ p.payment_no }}</td><td>{{ p.remit_date|fd }}</td><td class="mono">{{ p.invoice_ref }}</td><td class="num">{{ p.invoice.total_h|n }}</td><td class="num">{{ p.paid_h|n }}</td><td class="num"><b class="bad-t">{{ p.deduction_h|n }}</b></td><td>{{ p.reason|default:"—" }}</td>
+  <td><div class="row" style="flex-wrap:nowrap"><button class="btn sm pri" hx-get="/pay/{{ p.payment_no }}/dispute/" hx-target="#modal" {% perm 'dispute' %}>Dispute</button>{% if 'promo' in p.reason|lower %}<button class="btn sm" hx-get="/pay/{{ p.payment_no }}/link-dn/" hx-target="#modal" {% perm 'dispute' %}>Link to DN</button>{% endif %}<button class="btn sm" hx-get="/pay/{{ p.payment_no }}/accept/" hx-target="#modal" {% perm 'dispute' %}>Accept</button></div></td></tr>{% endfor %}</tbody></table></div>
+  {% else %}<div class="tw"><div class="empty"><div class="ei">{% icon 'check' %}</div><b>No short payments</b><span>Every matched payment equals its invoice.</span></div></div>{% endif %}
+{% elif tab == 'match' %}
+  <div class="fbar"><button class="btn pri" hx-post="/pay/automatch/" hx-swap="none" {% perm 'dispute' %}>{% icon 'refresh' %}<span>Run auto-match</span></button><span class="small muted">Matches by invoice number first, then by exact amount.</span></div>
+  {% if unm %}<div class="tw"><table class="dt"><thead><tr><th>Payment</th><th>Date</th><th>Invoice reference</th><th class="num">Paid SAR</th><th></th></tr></thead><tbody>
+  {% for p in unm %}<tr class="click" hx-get="/records/payment/{{ p.payment_no }}/" hx-target="#drawer"><td class="mono">{{ p.payment_no }}</td><td>{{ p.remit_date|fd }}</td><td><span class="mono">{{ p.invoice_ref }}</span> {% chip "Not found" "warn" %}</td><td class="num">{{ p.paid_h|n }}</td><td><button class="btn sm" hx-get="/records/payment/{{ p.payment_no }}/" hx-target="#drawer">Match</button></td></tr>{% endfor %}</tbody></table></div>
+  {% else %}<div class="tw"><div class="empty"><div class="ei">{% icon 'wallet' %}</div><b>Nothing to match</b><span>Upload a remittance report to import payments.</span></div></div>{% endif %}
+{% elif tab == 'matched' %}
+  <div class="tw"><table class="dt"><thead><tr><th>Payment</th><th>Date</th><th>Invoice #</th><th>PO #</th><th class="num">Paid SAR</th><th class="num">Deduction SAR</th><th>Status</th></tr></thead><tbody>
+  {% for p in matched %}<tr class="click" hx-get="/records/po/{{ p.po.po_no }}/?tab=invoice" hx-target="#drawer"><td class="mono">{{ p.payment_no }}</td><td>{{ p.remit_date|fd }}</td><td class="mono">{{ p.invoice_ref }}</td><td class="mono">{{ p.po.po_no }}</td><td class="num">{{ p.paid_h|n }}</td><td class="num">{% if p.deduction_h %}{{ p.deduction_h|n }}{% else %}—{% endif %}</td>
+  <td>{% if p.status == 'matched' %}{% chip "Matched" "ok" %}{% elif p.status == 'recovered' %}{% chip "Recovered" "ok" %}{% else %}{% chip "Deduction accepted" %}{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}
+  <div class="tw"><table class="dt"><thead><tr><th>Case</th><th>Type</th><th>Reference</th><th>PO / promo</th><th class="num">Amount SAR</th><th>Opened</th><th>Status</th></tr></thead><tbody>
+  {% for d in disputes %}<tr class="click" hx-get="/records/dispute/{{ d.case_no }}/" hx-target="#drawer"><td><b class="mono">{{ d.case_no }}</b></td><td>{{ d.get_type_display }}</td><td class="mono">{{ d.ref }}</td><td class="mono">{% if d.po %}{{ d.po.po_no }}{% elif d.promotion %}{{ d.promotion.mecl_ref }}{% else %}—{% endif %}</td><td class="num">{{ d.amount_h|n }}</td><td>{{ d.created_at|fd }}</td>
+  <td>{% if d.status == 'open' %}{% chip "Open" "warn" %}{% elif d.status == 'submitted' %}{% chip "With Amazon" "info" %}{% elif d.status == 'won' %}{% chip "Won" "ok" %}{% else %}{% chip "Lost" "bad" %}{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+{% endif %}
+{% endblock %}

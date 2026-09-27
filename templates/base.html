@@ -1,0 +1,40 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{% block title %}{% page_title %} · ME Vendor Hub{% endblock %}</title>
+<meta name="csrf-token" content="{{ csrf_token }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="{% static 'css/hub.css' %}">
+<script src="{% static 'js/htmx.min.js' %}" defer></script>
+<script src="{% static 'js/alpine.min.js' %}" defer></script>
+<script src="{% static 'js/hub.js' %}" defer></script>
+</head>
+<body hx-boost="true" data-sse="1">
+<div id="app">
+  <aside class="side" id="side" aria-label="Main navigation">{% include "partials/nav.html" %}</aside>
+  <div class="main">
+    <header class="top">
+      <button type="button" class="icon-btn menu-btn" aria-label="Open menu" onclick="document.getElementById('app').classList.toggle('side-open')">{% icon 'menu' %}</button>
+      <div class="crumb">ME Vendor Hub / <b>{% page_title %}</b></div>
+      <button type="button" class="search" hx-get="/search/" hx-target="#pal" hx-swap="innerHTML" aria-label="Search records">{% icon 'search' %}<span>Search PO, ASN, invoice, agreement, DN, model…</span><kbd>Ctrl K</kbd></button>
+      {% if caps.upload %}<button type="button" class="btn pri up-btn" hx-get="/uploads/new/" hx-target="#modal" hx-swap="innerHTML">{% icon 'upload' %}<span>Upload</span></button>{% endif %}
+      <span id="bell-slot">{% include "partials/bell.html" %}</span>
+      {% include "partials/user.html" %}
+    </header>
+    <main class="content" id="view">
+      {% for m in messages %}<div class="flash {{ m.tags }}">{% icon 'info' %}<span>{{ m }}</span></div>{% endfor %}
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+<div id="drawer"></div>
+<div id="modal"></div>
+<div id="pal"></div>
+<div id="pop"></div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+</body>
+</html>

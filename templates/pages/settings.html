@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="ph"><div><h1>Settings</h1><p>Master data, rules and access. Changes here affect every check in the hub.</p></div></div>
+<div class="tabs" role="tablist">{% for id, label in tabs %}<a class="tab {% if id == tab %}on{% endif %}" href="?tab={{ id }}">{{ label }}</a>{% endfor %}</div>
+
+{% if tab == 'skus' or tab == 'prices' %}
+<form class="fbar" hx-get="/settings/" hx-target="#view" hx-select="#view" hx-swap="outerHTML" hx-trigger="input changed delay:300ms from:#set-q" hx-push-url="true">
+  <input type="hidden" name="tab" value="{{ tab }}">
+  <div class="fsearch">{% icon 'search' %}<input class="inp" id="set-q" name="q" placeholder="SKU, model, ASIN or description" value="{{ q }}" aria-label="Search SKUs"></div>
+  <span class="small muted">{{ page.paginator.count|num }} of {{ total|num }} SKUs</span><span class="spacer"></span>
+  <button type="button" class="btn" hx-get="/uploads/new/?type={% if tab == 'skus' %}U1{% else %}U2{% endif %}" hx-target="#modal" {% perm 'upload' %}>{% icon 'upload' %}<span>{% if tab == 'skus' %}Upload SKU master{% else %}Upload price list{% endif %}</span></button>
+</form>
+<div class="tw"><table class="dt"><thead><tr>{% if tab == 'skus' %}<th>SKU</th><th>Model</th><th>Description</th><th>Cat.</th><th>ASIN</th><th>EAN</th><th class="num">Free stock</th>{% else %}<th>SKU</th><th>Model</th><th>Cat.</th><th class="num">Agreed cost SAR</th><th>Valid from</th><th>Valid to</th>{% endif %}</tr></thead><tbody>
+{% for s in page %}<tr class="click" hx-get="/records/sku/{{ s.sku_code }}/" hx-target="#drawer">
+{% if tab == 'skus' %}<td><b class="mono">{{ s.sku_code }}</b></td><td>{{ s.model_no }}</td><td>{{ s.description }}</td><td>{% cat s.category %}</td><td class="mono">{{ s.asin }}</td><td class="mono">{{ s.ean }}</td><td class="num {% if not s.free_stock %}bad-t{% endif %}">{{ s.free_stock|num }}</td>
+{% else %}{% with pr=prices|get:s.pk %}<td><b class="mono">{{ s.sku_code }}</b></td><td>{{ s.model_no }}</td><td>{% cat s.category %}</td><td class="num">{{ s.cost_h|n2 }}</td><td>{% if pr %}{{ pr.valid_from|date:"d M Y" }}{% else %}—{% endif %}</td><td><span class="faint">Open</span></td>{% endwith %}{% endif %}</tr>
+{% empty %}<tr><td colspan="7"><div class="empty"><b>No SKUs match</b><span>Try another search.</span></div></td></tr>{% endfor %}</tbody></table></div>
+<div class="pager"><span>Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+{% if page.has_previous %}<a class="btn sm" href="?tab={{ tab }}&q={{ q|urlencode }}&page={{ page.previous_page_number }}" title="Previous page" aria-label="Previous page">{% icon 'chevl' %}</a>{% else %}<button class="btn sm" disabled aria-label="Previous page">{% icon 'chevl' %}</button>{% endif %}
+{% if page.has_next %}<a class="btn sm" href="?tab={{ tab }}&q={{ q|urlencode }}&page={{ page.next_page_number }}" title="Next page" aria-label="Next page">{% icon 'chev' %}</a>{% else %}<button class="btn sm" disabled aria-label="Next page">{% icon 'chev' %}</button>{% endif %}</div>
+
+{% elif tab == 'rules' %}
+{% if not caps.settings %}<div class="banner info" style="margin-bottom:12px">{% icon 'info' %}<span class="t">Only Admin can change rules.</span></div>{% endif %}
+<div class="tw"><table class="dt"><thead><tr><th>Rule</th><th>What it checks</th><th>Setting</th><th>On</th></tr></thead><tbody>
+{% for r in rules %}<tr><td><b class="mono">{{ r.rule_id }}</b> {{ r.name }}</td><td class="muted">{{ r.description }}</td><td>
+{% if r.rule_id == 'R1' %}<span class="row"><input class="inp sm qty" id="r-R1-pct" name="value" type="number" step="0.1" min="0" value="{{ r.params.pct }}" hx-post="/settings/rules/R1/" hx-vals='{"field": "pct"}' hx-trigger="change" hx-swap="none" {% if not caps.settings %}disabled{% endif %} aria-label="Price tolerance percent"> % or
+<input class="inp sm qty" id="r-R1-abs" name="value" type="number" step="0.5" min="0" value="{{ r.params.abs }}" hx-post="/settings/rules/R1/" hx-vals='{"field": "abs"}' hx-trigger="change" hx-swap="none" {% if not caps.settings %}disabled{% endif %} aria-label="Price tolerance SAR"> SAR</span>
+{% elif r.params.hrs is not None %}<span class="row"><input class="inp sm qty" id="r-{{ r.rule_id }}-hrs" name="value" type="number" min="1" value="{{ r.params.hrs }}" hx-post="/settings/rules/{{ r.rule_id }}/" hx-vals='{"field": "hrs"}' hx-trigger="change" hx-swap="none" {% if not caps.settings %}disabled{% endif %} aria-label="{{ r.name }} hours"> hours ahead</span>
+{% elif r.params.days is not None %}<span class="row"><input class="inp sm qty" id="r-{{ r.rule_id }}-days" name="value" type="number" min="1" value="{{ r.params.days }}" hx-post="/settings/rules/{{ r.rule_id }}/" hx-vals='{"field": "days"}' hx-trigger="change" hx-swap="none" {% if not caps.settings %}disabled{% endif %} aria-label="{{ r.name }} days"> days after due date</span>
+{% elif r.params.abs is not None %}<span class="row"><input class="inp sm qty" id="r-{{ r.rule_id }}-abs" name="value" type="number" step="0.5" min="0" value="{{ r.params.abs }}" hx-post="/settings/rules/{{ r.rule_id }}/" hx-vals='{"field": "abs"}' hx-trigger="change" hx-swap="none" {% if not caps.settings %}disabled{% endif %} aria-label="{{ r.name }} SAR"> SAR</span>
+{% else %}<span class="faint">—</span>{% endif %}</td>
+<td><label class="tg"><input type="checkbox" id="r-{{ r.rule_id }}-on" name="value" {% if r.enabled %}checked{% endif %} hx-post="/settings/rules/{{ r.rule_id }}/" hx-vals='{"field": "enabled"}' hx-trigger="change" hx-swap="none" {% if not caps.settings %}disabled{% endif %} aria-label="{{ r.name }} on"><span></span></label></td></tr>{% endfor %}</tbody></table></div>
+<p class="small faint" style="margin-top:8px">Changes apply to every open record: a background job re-runs the checks. Each change is kept in the audit trail.</p>
+
+{% elif tab == 'cats' %}
+<div class="tw"><table class="dt"><thead><tr><th>Code</th><th>Name</th><th class="num">SKUs</th><th class="num">Promos, all time</th><th class="num">Typical monthly promos</th></tr></thead><tbody>
+{% for c in cats %}<tr><td>{% cat c.c %}</td><td>{{ c.name }}</td><td class="num">{{ c.skus|num }}</td><td class="num">{{ c.promos }}</td><td class="num">{{ c.typical }}</td></tr>{% endfor %}</tbody></table></div>
+
+{% elif tab == 'fcs' %}
+<div class="tw"><table class="dt"><thead><tr><th>Code</th><th>Name</th><th>City</th><th class="num">Open POs</th></tr></thead><tbody>
+{% for f, n in fcs %}<tr><td><b class="mono">{{ f.code }}</b></td><td>{{ f.name }}</td><td>{{ f.city }}</td><td class="num">{{ n }}</td></tr>{% endfor %}</tbody></table></div>
+<p class="small faint" style="margin-top:8px">Example FC codes. Replace with the Amazon.sa ship-to codes from Vendor Central.</p>
+
+{% elif tab == 'users' %}
+<div class="tw"><table class="dt"><thead><tr><th>Permission</th>{% for k, t in roles %}<th style="text-align:center">{{ t }}</th>{% endfor %}</tr></thead><tbody>
+{% for label, row in perms %}<tr><td>{{ label }}</td>{% for ok in row %}<td style="text-align:center">{% if ok %}{% icon 'check' 'ico-ok' %}{% else %}<span class="faint">—</span>{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+<h3 class="sect-h" style="margin:22px 0 10px">People</h3>
+<div class="tw"><table class="dt"><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Sign-in</th></tr></thead><tbody>
+{% for u in people %}<tr><td><span class="row" style="flex-wrap:nowrap"><span class="av">{{ u.initials }}</span>{{ u.name }}</span></td><td class="mono">{{ u.username }}</td><td>{{ u.role_title }}</td><td>{% if dev_login %}<span class="faint">Password (dev)</span>{% else %}Microsoft Entra ID{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+<p class="small faint" style="margin-top:8px">In production, roles come from Entra ID groups at sign-in. Admins can also adjust them in the Django admin.</p>
+
+{% elif tab == 'notify' %}
+<div class="tw"><table class="dt"><thead><tr><th>Alert</th><th>When</th><th>Who</th><th>In app</th><th>Email</th></tr></thead><tbody>
+{% for a in alerts %}<tr><td>{{ a.0 }}</td><td>{{ a.1 }}</td><td>{{ a.2 }}</td><td><label class="tg"><input type="checkbox" checked disabled aria-label="In app"><span></span></label></td><td><label class="tg"><input type="checkbox" {% if a.3 %}checked{% endif %} disabled aria-label="Email"><span></span></label></td></tr>{% endfor %}</tbody></table></div>
+<p class="small faint" style="margin-top:8px">Email sending needs the Email connector (Integrations).</p>
+
+{% elif tab == 'numbering' %}
+<div class="card"><div class="card-b fgrid">{% for l, f, x in numbers %}<div class="field"><label for="num-{{ forloop.counter }}">{{ l }}</label><input class="inp" id="num-{{ forloop.counter }}" value="{{ f }}" disabled><span class="help">Next: <span class="mono">{{ x }}</span></span></div>{% endfor %}</div></div>
+{% endif %}
+{% endblock %}

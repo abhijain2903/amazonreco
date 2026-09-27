@@ -1,0 +1,9 @@
+{% extends "dialogs/_modal.html" %}
+{% block mtitle %}{{ f.filename }}{% endblock %}
+{% block msub %}<p>Generated {{ f.created_at|fdt }} · {{ rows|length|add:"-1" }} rows</p>{% endblock %}
+{% block mbody %}
+<div class="banner info">{% icon 'info' %}<span class="t">File mode: upload this file to the other system. When the connector is live, the hub sends it automatically.</span></div>
+<div class="tw"><table class="dt compact"><thead><tr>{% for h in rows.0 %}<th>{{ h }}</th>{% endfor %}</tr></thead><tbody>{% for r in rows|slice:"1:13" %}<tr>{% for v in r %}<td>{{ v }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+<div class="field"><label for="file-csv">CSV</label><textarea class="inp pre" id="file-csv" rows="6" readonly>{{ f.content }}</textarea></div>
+{% endblock %}
+{% block mfoot %}<span class="hint"></span><button type="button" class="btn" data-copy="file-csv">{% icon 'copy' %}<span>Copy CSV</span></button><a class="btn" href="/files/{{ f.pk }}/" hx-boost="false" download>{% icon 'download' %}<span>Download</span></a><button type="button" class="btn pri" data-close="modal">Done</button>{% endblock %}

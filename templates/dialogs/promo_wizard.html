@@ -1,0 +1,42 @@
+{% extends "dialogs/_modal.html" %}
+{% block label %}New promotion{% endblock %}
+{% block mtitle %}New promotion{% endblock %}
+{% block msub %}<p>Replaces the product team email and the Excel tracker row.</p>{% endblock %}
+{% block wiz %}<div class="wiz">{% for s in steps %}{% if not forloop.first %}<em></em>{% endif %}<span class="{% if forloop.counter == w.step %}on{% elif forloop.counter < w.step %}done{% endif %}"><i>{% if forloop.counter < w.step %}✓{% else %}{{ forloop.counter }}{% endif %}</i>{{ s }}</span>{% endfor %}</div>{% endblock %}
+{% block form_open %}<form hx-post="/promos/new/" hx-target="#modal" hx-swap="innerHTML">{% endblock %}
+{% block mbody %}
+{% if w.step == 1 %}
+  <div class="field"><label for="w-name">Promotion name</label><input class="inp" id="w-name" name="name" value="{{ w.name }}" placeholder="e.g. Mega deals week · Wireless headphones" autofocus></div>
+  <div class="fgrid">
+    <div class="field"><label for="w-cat">Category</label><select class="sel" id="w-cat" name="cat">{% for c, n in cats %}<option value="{{ c }}" {% if w.cat == c %}selected{% endif %}>{{ c }} · {{ n }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="w-start">Start date</label><input class="inp" type="date" id="w-start" name="start" value="{{ w.start }}"></div>
+    <div class="field"><label for="w-end">End date</label><input class="inp" type="date" id="w-end" name="end" value="{{ w.end }}"></div>
+    <div class="field"><label for="w-owner">Product owner</label><input class="inp" id="w-owner" name="owner" value="{{ w.owner }}"></div>
+  </div>
+  {% if w.lines %}<p class="small muted">Changing the category clears the {{ w.lines|length }} model{{ w.lines|pluralize }} already added.</p>{% endif %}
+{% elif w.step == 2 %}
+  <div class="row"><select class="sel" id="w-sku" name="sku" aria-label="Add a model" style="flex:1;min-width:220px">{% for s in opts %}<option value="{{ s.sku_code }}">{{ s.model_no }} · {{ s.description }} · cost {{ s.cost_h|n }}</option>{% endfor %}</select>
+  <button class="btn" type="submit" name="act" value="add">{% icon 'plus' %}<span>Add model</span></button></div>
+  {% if lines %}<div class="tw"><table class="dt compact"><thead><tr><th>Model</th><th class="num">Agreed cost</th><th class="num">Support / unit SAR</th><th class="num">Expected units</th><th class="num">Support SAR</th><th></th></tr></thead><tbody>
+  {% for l in lines %}<tr><td><b style="font-weight:500">{{ l.s.model_no }}</b><div class="small muted">{{ l.s.description }} · <span class="mono">{{ l.s.sku_code }}</span></div></td><td class="num">{{ l.s.cost_h|n }}</td>
+  <td class="num"><input class="inp sm qty" type="number" min="0" step="0.01" id="w-sup-{{ l.i }}" name="support-{{ l.i }}" value="{{ l.support }}" aria-label="Support per unit" hx-post="/promos/new/" hx-trigger="change" hx-vals='{"act": "recalc"}'></td>
+  <td class="num"><input class="inp sm qty" type="number" min="0" id="w-exp-{{ l.i }}" name="expected-{{ l.i }}" value="{{ l.expected }}" aria-label="Expected units" hx-post="/promos/new/" hx-trigger="change" hx-vals='{"act": "recalc"}'></td>
+  <td class="num">{{ l.total|floatformat:"0g" }}</td><td><button class="btn sm ghost" type="submit" name="act" value="rm-{{ l.i }}" title="Remove" aria-label="Remove {{ l.s.model_no }}">{% icon 'x' %}</button></td></tr>{% endfor %}</tbody>
+  <tfoot><tr><td>Total</td><td></td><td></td><td class="num">{{ exp_total|num }}</td><td class="num">{{ total|floatformat:"0g" }}</td><td></td></tr></tfoot></table></div>
+  {% else %}<div class="empty"><div class="ei">{% icon 'tag' %}</div><b>No models yet</b><span>Add the models this promotion covers.</span></div>{% endif %}
+{% else %}
+  <div class="kv2"><div><span>Promotion</span><b>{{ w.name }}</b></div><div><span>Category</span><b>{% cat w.cat %}</b></div><div><span>Runs</span><b>{{ start|fd }} – {{ end|fd }}</b></div><div><span>DN due</span><b>{{ dn_due|fd }}</b></div><div><span>Total support</span><b>SAR {{ total|floatformat:"0g" }}</b></div></div>
+  {% if warn %}<div class="banner warn">{% icon 'alert' %}<span class="t">{{ warn|length }} model{% if warn|length > 1 %}s have{% else %} has{% endif %} support above 25% of cost. Check before submitting.</span></div>
+  {% else %}<div class="banner ok">{% icon 'check' %}<span class="t">Support per unit looks normal for every model.</span></div>{% endif %}
+  <h3 class="sect-h">Amazon submission format (preview)</h3>
+  <div class="tw"><table class="dt compact"><thead><tr><th>ASIN</th><th>Model</th><th>Start</th><th>End</th><th class="num">Funding / unit</th><th class="num">Est. units</th></tr></thead><tbody>
+  {% for l in lines %}<tr><td class="mono">{{ l.s.asin }}</td><td>{{ l.s.model_no }}</td><td>{{ w.start }}</td><td>{{ w.end }}</td><td class="num">{{ l.support|floatformat:2 }}</td><td class="num">{{ l.expected|num }}</td></tr>{% endfor %}</tbody></table></div>
+{% endif %}
+{% if w.err %}<div class="banner bad" role="alert">{% icon 'x' %}<span class="t">{{ w.err }}</span></div>{% endif %}
+{% endblock %}
+{% block mfoot %}
+{% if w.step == 1 %}<span class="hint">The debit note is due 30 days after the end date.</span><button class="btn pri" type="submit" name="act" value="next">Next</button>
+{% elif w.step == 2 %}<span class="hint">Support per unit is what ME funds for each unit Amazon sells.</span><button class="btn" type="submit" name="act" value="back">Back</button><button class="btn pri" type="submit" name="act" value="next">Next</button>
+{% else %}<span class="hint"></span><button class="btn" type="submit" name="act" value="back">Back</button><button class="btn" type="submit" name="act" value="draft">Save as draft</button><button class="btn pri" type="submit" name="act" value="submit">{% icon 'send' %}<span>Submit to Amazon</span></button>{% endif %}
+{% endblock %}
+{% block form_close %}</form>{% endblock %}

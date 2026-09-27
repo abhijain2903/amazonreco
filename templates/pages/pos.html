@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="ph"><div><h1>Purchase Orders</h1><p>Amazon POs from arrival to invoice. Price and stock checks run the moment a PO lands.</p></div>
+<div class="ph-act"><button class="btn" hx-get="/uploads/new/?type=U4" hx-target="#modal" {% perm 'upload' %}>{% icon 'upload' %}<span>Upload POs</span></button></div></div>
+<div class="kpis">{% for k in kpis %}<a class="kpi {% if k.alert %}alert{% endif %}" href="{{ k.url }}"><span class="kpi-l">{{ k.l }}</span><span class="kpi-v">{{ k.v }}</span><span class="kpi-s">{{ k.s }}</span></a>{% endfor %}</div>
+{% if view == 'table' %}<div class="tabs" role="tablist">{% for t in tabs %}<a class="tab {% if t.id == tab %}on{% endif %}" href="?tab={{ t.id }}&q={{ q|urlencode }}&fc={{ fc }}">{{ t.label }}<span class="ct">{{ t.count }}</span></a>{% endfor %}</div>{% endif %}
+<form class="fbar" hx-get="/pos/" hx-target="#view" hx-select="#view" hx-swap="outerHTML" hx-trigger="input changed delay:300ms from:#po-q, change from:#po-fc" hx-push-url="true">
+  <input type="hidden" name="tab" value="{{ tab }}"><input type="hidden" name="view" value="{{ view }}">
+  <div class="fsearch">{% icon 'search' %}<input class="inp" id="po-q" name="q" placeholder="PO, SAP order, model or ASIN" value="{{ q }}" aria-label="Search purchase orders"></div>
+  <select class="sel" id="po-fc" name="fc" aria-label="Fulfilment centre"><option value="">All fulfilment centres</option>{% for f in fcs %}<option value="{{ f.code }}" {% if f.code == fc %}selected{% endif %}>{{ f.code }}</option>{% endfor %}</select>
+  <span class="spacer"></span>
+  <div class="seg" role="group" aria-label="View"><a class="{% if view == 'table' %}on{% endif %}" href="?view=table&tab={{ tab }}" style="display:flex;align-items:center;gap:6px;height:32px;padding:0 11px;text-decoration:none;color:inherit">{% icon 'table' %}Table</a><a class="{% if view == 'board' %}on{% endif %}" href="?view=board" style="display:flex;align-items:center;gap:6px;height:32px;padding:0 11px;text-decoration:none;color:inherit;border-left:1px solid var(--border2)">{% icon 'board' %}Board</a></div>
+</form>
+{% if view == 'board' %}
+<div class="board">{% for col in board %}<div class="bcol"><div class="bcol-h">{{ col.label }}<span class="ct">{{ col.items|length|add:col.more }}</span></div>
+{% for r in col.items %}<button type="button" class="bcard" hx-get="/records/po/{{ r.po.po_no }}/" hx-target="#drawer"><div class="r"><b class="mono" style="color:var(--text)">{{ r.po.po_no }}</b>{% if r.po.stage == 'new' %}{% if r.issues %}{% chip r.issues|stringformat:"d"|add:" to fix" "warn" %}{% else %}{% chip "Clean" "ok" %}{% endif %}{% endif %}</div>
+<div class="r"><span>{{ r.po.fc.code }} · {{ r.n_lines }} lines</span><b class="tnum" style="color:var(--text)">{{ r.value|n }}</b></div>
+<div class="r"><span>{% if r.po.stage == 'new' %}<span class="{% if r.state == 'overdue' %}bad-t{% endif %}">Confirm {{ r.po.confirm_by|due }}</span>{% else %}Ordered {{ r.po.order_date|fd }}{% endif %}</span><span class="tag">{{ col.owner }}</span></div></button>{% endfor %}
+{% if col.more %}<div class="bmore">+{{ col.more }} more</div>{% endif %}</div>{% endfor %}</div>
+{% else %}
+{% if rows %}<div class="tw"><table class="dt"><thead><tr><th>PO #</th><th>FC</th><th>Ordered</th><th>{% if tab == 'new' %}Confirm by{% else %}Last update{% endif %}</th><th class="num">Lines</th><th class="num">Units</th><th class="num">Value SAR</th><th>Checks</th><th>Stage</th></tr></thead><tbody>
+{% for r in rows %}<tr class="click" hx-get="/records/po/{{ r.po.po_no }}/" hx-target="#drawer">
+<td><b class="mono">{{ r.po.po_no }}</b></td><td>{{ r.po.fc.code }}</td><td>{{ r.po.order_date|fd }}</td>
+<td>{% if r.po.stage == 'new' %}<span class="{% if r.state == 'overdue' %}bad-t{% elif r.state == 'due_soon' %}warn-t{% endif %}">{{ r.po.confirm_by|fdt }}<div class="small">{{ r.po.confirm_by|due }}</div></span>{% else %}{{ r.last|fd }}{% endif %}</td>
+<td class="num">{{ r.n_lines }}</td><td class="num">{{ r.units|num }}</td><td class="num">{{ r.value|n }}</td>
+<td>{% if r.po.stage != 'new' %}<span class="small muted">{% icon 'check' 'ico-ok' %} Passed</span>{% elif r.issues %}<span class="warn-t small">{% icon 'alert' %} {{ r.issues }} to fix</span>{% else %}<span class="ok-t small">{% icon 'check' %} All {{ r.n_lines }} passed</span>{% endif %}</td>
+<td>{% po_chip r.po %}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}<div class="tw"><div class="empty"><div class="ei">{% icon 'inbox' %}</div><b>No purchase orders here</b><span>Upload a Vendor Central PO export to get started.</span><button class="btn pri" hx-get="/uploads/new/?type=U4" hx-target="#modal" {% perm 'upload' %}>{% icon 'upload' %}<span>Upload POs</span></button></div></div>{% endif %}
+{% endif %}
+{% endblock %}

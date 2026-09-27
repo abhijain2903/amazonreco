@@ -1,0 +1,11 @@
+{% extends "records/_drawer.html" %}
+{% block narrow %}narrow{% endblock %}{% block type %}Dispute{% endblock %}{% block title %}{{ d.case_no }}{% endblock %}
+{% block chip %}{% if d.status == 'open' %}{% chip "Open" "warn" %}{% elif d.status == 'submitted' %}{% chip "With Amazon" "info" %}{% elif d.status == 'won' %}{% chip "Won" "ok" %}{% else %}{% chip "Lost" "bad" %}{% endif %}{% endblock %}
+{% block body %}
+<div class="kv2"><div><span>Type</span><b>{{ d.get_type_display }}</b></div><div><span>Amount</span><b>{{ d.amount_h|sar }}</b></div><div><span>Reference</span><b class="mono">{{ d.ref }}</b></div><div><span>PO / promotion</span><b class="mono">{% if d.po %}{{ d.po.po_no }}{% elif d.promotion %}{{ d.promotion.mecl_ref }}{% else %}—{% endif %}</b></div><div><span>Opened</span><b>{{ d.created_at|fd }}</b></div><div><span>Follow up by</span><b>{{ d.due|fd }}</b></div></div>
+<div class="field"><label>Note</label><p>{{ d.note|default:"—" }}</p></div>
+<div class="field"><label>Evidence</label><div class="row">{% for e in d.evidence.all %}{% if e.file %}<a class="pill-note" href="{{ e.file.url }}" hx-boost="false">{% icon 'file' %}{{ e.filename }}</a>{% else %}<span class="pill-note">{% icon 'file' %}{{ e.filename }}</span>{% endif %}{% empty %}<span class="faint">None</span>{% endfor %}</div></div>
+<h3 class="sect-h">Timeline</h3>{% include "partials/timeline.html" %}
+{% endblock %}
+{% block foot %}{% if d.status == 'open' %}<button class="btn pri" hx-post="/pay/disputes/{{ d.case_no }}/submitted/" hx-swap="none" {% perm 'dispute' %}>Mark submitted to Amazon</button>
+{% elif d.status == 'submitted' %}<button class="btn danger" hx-post="/pay/disputes/{{ d.case_no }}/lost/" hx-swap="none" {% perm 'dispute' %}>Mark lost</button><button class="btn pri" hx-post="/pay/disputes/{{ d.case_no }}/won/" hx-swap="none" {% perm 'dispute' %}>{% icon 'check' %}<span>Mark won</span></button>{% endif %}{% endblock %}

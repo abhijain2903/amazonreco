@@ -1,0 +1,14 @@
+{% extends "dialogs/_modal.html" %}
+{% block size %}sm{% endblock %}{% block label %}Book delivery slot{% endblock %}
+{% block mtitle %}Book delivery slot{% endblock %}
+{% block msub %}<p>PO {{ po.po_no }} · ASN {{ sh.asn_no }} · {{ po.fc.code }}</p>{% endblock %}
+{% block form_open %}<form hx-post="/pos/{{ po.po_no }}/slot/" hx-swap="none"><input type="hidden" name="version" value="{{ po.version }}">{% endblock %}
+{% block mbody %}
+<div class="banner info">{% icon 'info' %}<span class="t">Book the slot in Amazon Carrier Central, then enter the slot ID here. The hub tracks it against the ASN.</span></div>
+<div class="fgrid"><div class="field"><label for="sl-id">Carrier Central slot ID</label><input class="inp" id="sl-id" name="slot_id" value="{{ next_slot }}" required></div>
+<div class="field"><label for="sl-date">Date</label><input class="inp" type="date" id="sl-date" name="date" value="{{ day }}"></div>
+<div class="field"><label for="sl-win">Time window</label><select class="sel" id="sl-win" name="window"><option>08:00–12:00</option><option>12:00–16:00</option><option>16:00–20:00</option></select></div></div>
+<div class="kv2"><div><span>Cartons</span><b>{{ sh.cartons }}</b></div><div><span>Units</span><b>{{ units|num }}</b></div><div><span>Truck ships</span><b>{{ sh.ship_date|fdt }}</b></div></div>
+{% endblock %}
+{% block mfoot %}<span class="hint"></span><button type="button" class="btn" data-close="modal">Cancel</button><button class="btn pri" type="submit">Save slot</button>{% endblock %}
+{% block form_close %}</form>{% endblock %}

@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="ph"><div><h1>{{ greeting }}</h1><p>Amazon sell-in and sell-out at a glance · {{ today|fdy }}</p></div><div class="ph-act"><a class="btn" href="/action/">{% icon 'inbox' %}<span>Open Action Center</span></a></div></div>
+<div class="kpis k7">{% for k in kpis %}<a class="kpi {% if k.alert %}alert{% endif %}" href="{{ k.url }}"><span class="kpi-l">{{ k.l }}</span><span class="kpi-v">{{ k.v }}</span><span class="kpi-s {% if k.bad_sub %}bad-t{% endif %}">{{ k.s }}</span></a>{% endfor %}</div>
+<div class="grid2" style="margin-bottom:16px">
+  <div class="card"><div class="card-h"><h3>Sell-in pipeline</h3><span class="spacer"></span><span class="small muted">{{ n_pos }} POs · Order-to-Invoice</span></div><div class="card-b">{% include "partials/pipe.html" with arr=pipe_in %}</div></div>
+  <div class="card"><div class="card-h"><h3>Sell-out pipeline</h3><span class="spacer"></span><span class="small muted">{{ n_promos }} promotions · Promotion-to-Claim</span></div><div class="card-b">{% include "partials/pipe.html" with arr=pipe_out %}</div></div>
+</div>
+<div class="grid2" style="margin-bottom:16px">
+  <div class="card"><div class="card-h"><h3>Needs you next</h3><span class="spacer"></span><a class="btn sm ghost" href="/action/">See all</a></div><div class="card-b"><div class="ac">{% for i in items %}{% include "partials/aci.html" %}{% empty %}<div class="allclear"><div class="big">{% icon 'check' %}</div><b>All clear</b></div>{% endfor %}</div></div></div>
+  <div class="card"><div class="card-h"><h3>Invoice to cash</h3></div><div class="card-b"><div class="chart"><svg viewBox="0 0 {{ chart.W }} {{ chart.H }}" role="img" aria-label="Days from invoice to payment, last six months">
+    {% for g in chart.grid %}<line x1="{{ g.x1 }}" x2="{{ g.x2 }}" y1="{{ g.y }}" y2="{{ g.y }}" stroke="var(--border)" stroke-width="1"/><text x="{{ g.tx }}" y="{{ g.y|add:4 }}" text-anchor="end">{{ g.v }}</text>{% endfor %}
+    <path d="{{ chart.area }}" fill="var(--primary)" opacity=".10"/><path d="{{ chart.line }}" fill="none" stroke="var(--primary)" stroke-width="2.4" stroke-linejoin="round"/>
+    {% for p in chart.pts %}<circle cx="{{ p.x }}" cy="{{ p.y }}" r="{% if p.last %}5{% else %}3{% endif %}" fill="{% if p.last %}var(--primary){% else %}var(--surface){% endif %}" stroke="var(--primary)" stroke-width="2"/>{% endfor %}
+    <text x="{{ chart.lx }}" y="{{ chart.ly }}" text-anchor="end" style="fill:var(--text);font-weight:600">{{ chart.cur }} days</text>
+    {% for l in chart.labels %}<text x="{{ l.x }}" y="{{ chart.by }}" text-anchor="middle">{{ l.t }}</text>{% endfor %}
+  </svg></div><p class="small faint">Average days from invoice to payment. The latest month is calculated from matched payments; earlier months are example history.</p></div></div>
+</div>
+<div class="grid2">
+  <div class="card"><div class="card-h"><h3>Open promotions by category</h3></div><div class="card-b"><div style="display:grid;gap:10px">{% for c in cats %}<a href="/promos/?cat={{ c.c }}" style="display:grid;grid-template-columns:64px 1fr 28px;align-items:center;gap:10px;color:inherit;text-decoration:none">{% cat c.c %}<span style="height:14px;border-radius:4px;background:var(--sunk);overflow:hidden"><span style="display:block;height:100%;width:{{ c.w }}%;background:var(--c-{% if c.c == 'Bundle' %}bd{% else %}{{ c.c|lower }}{% endif %})"></span></span><b class="num">{{ c.n }}</b></a>{% endfor %}</div><p class="small faint" style="margin-top:10px">Business-as-usual volume is about 13 promotions a month: PA 4 · DI 6 · TV 1 · HAV 1 · Bundle 1.</p></div></div>
+  <div class="card"><div class="card-h">{% icon 'zap' 'info-t' %}<h3>Automation this month</h3></div><div class="card-b"><div class="auto"><div><b>{{ auto.checked|num }}</b><span>PO lines checked automatically</span></div><div><b>{{ auto.retypes|num }}</b><span>Manual retypes avoided</span></div><div><b>{{ auto.dnv|num }}</b><span>Debit notes matched</span></div><div><b>~{{ auto.hours|num }} h</b><span>PIC time saved (estimate)</span></div></div><p class="small faint" style="margin-top:10px">Estimate: 3 min per retype avoided, 1.5 min per line check, 25 min per debit note.</p></div></div>
+</div>
+{% endblock %}

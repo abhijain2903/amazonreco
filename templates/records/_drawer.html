@@ -1,0 +1,15 @@
+<div data-url="{{ url }}">
+<div class="scrim" data-close="drawer"></div>
+<aside class="drawer {% block narrow %}{% endblock %}" role="dialog" aria-modal="true" aria-label="{% block label %}Record{% endblock %}">
+  <div class="dh">
+    <div class="dh-top">
+      <div style="flex:1;min-width:0"><div class="dh-type">{% block type %}{% endblock %}</div>
+        <h2><span class="mono" style="font-size:19px">{% block title %}{% endblock %}</span>{% block chip %}{% endblock %}</h2></div>
+      <button type="button" class="icon-btn" data-close="drawer" aria-label="Close">{% icon 'x' %}</button>
+    </div>
+    {% block head %}<div style="height:12px"></div>{% endblock %}
+  </div>
+  <div class="db">{% block body %}{% endblock %}</div>
+  {% block footwrap %}<div class="df"><span class="hint">{% block hint %}{% endblock %}</span>{% block foot %}{% endblock %}</div>{% endblock %}
+</aside>
+</div>

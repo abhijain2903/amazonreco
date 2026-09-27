@@ -1,0 +1,10 @@
+<div class="aci {{ i.sev }}"><span class="ai">{% icon i.icon %}</span>
+<div style="min-width:0"><b hx-get="/records/{{ i.open.0 }}/{{ i.open.1 }}/{% if i.open.2 %}?tab={{ i.open.2 }}{% endif %}" hx-target="#drawer" role="button" tabindex="0">{{ i.title }}</b>
+<div class="meta">{{ i.sub }}{% if i.due_text %} · <span class="{% if i.overdue %}bad-t{% elif i.due_soon %}warn-t{% endif %}">{{ i.due_text }}</span>{% endif %}{% if i.waiting or not i.mine %} · <span class="faint">{{ i.role_titles }}</span>{% endif %}</div></div>
+<div class="amt">{% if i.amt is not None %}{{ i.amt|n }}<small>SAR{% if i.amt_label %} {{ i.amt_label }}{% endif %}</small>{% endif %}</div>
+<div class="acts">{% with c=i.cta %}
+{% if c.kind == 'open' %}<button type="button" class="btn sm {% if i.sev == 'bad' or i.sev == 'warn' %}pri{% endif %}" hx-get="{{ c.url }}" hx-target="#drawer">{{ c.label }}</button>
+{% elif c.kind == 'dialog' %}<button type="button" class="btn sm {% if i.sev == 'bad' or i.sev == 'warn' %}pri{% endif %}" hx-get="{{ c.url }}" hx-target="#modal" {% perm c.perm %}>{{ c.label }}</button>
+{% elif c.kind == 'post' %}<button type="button" class="btn sm {% if i.sev == 'bad' or i.sev == 'warn' %}pri{% endif %}" hx-post="{{ c.url }}" hx-swap="none" {% perm c.perm %}>{{ c.label }}</button>
+{% else %}<a class="btn sm {% if i.sev == 'bad' or i.sev == 'warn' %}pri{% endif %}" href="{{ c.url }}">{{ c.label }}</a>{% endif %}
+{% endwith %}</div></div>

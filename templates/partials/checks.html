@@ -1,0 +1,3 @@
+<div class="checks"><div class="ck h"><span></span><span>Check</span><span class="v">Expected</span><span class="v">Actual</span><span class="v">Gap</span></div>
+{% for r in checks %}<div class="ck"><span>{% if r.ok is None %}{% icon 'clock' 'faint' %}{% elif r.ok %}{% icon 'check' 'ico-ok' %}{% elif r.warn %}{% icon 'alert' 'ico-warn' %}{% else %}{% icon 'x' 'ico-bad' %}{% endif %}</span><span class="rn">{{ r.name }}{% if r.sub %}<small>{{ r.sub }}</small>{% endif %}</span><span class="v">{{ r.exp|default:"—" }}</span><span class="v">{{ r.act|default:"—" }}</span><span class="v {% if r.ok == False and not r.warn %}bad-t{% elif r.warn %}warn-t{% endif %}">{{ r.gap|default:"—" }}</span></div>{% endfor %}
+</div>

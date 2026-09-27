@@ -1,0 +1,3 @@
+<div class="pal-w"><div class="scrim" data-close="pal"></div><div class="pal" role="dialog" aria-label="Search" style="position:relative;z-index:1">
+<div class="pal-in">{% icon 'search' %}<input id="pal-in" name="q" autocomplete="off" autofocus placeholder="Search PO, ASN, invoice, agreement, DN, claim, model…" hx-get="/search/?partial=1" hx-trigger="input changed delay:150ms" hx-target="#pal-r"><kbd>Esc</kbd></div>
+<div class="pal-r" id="pal-r">{% include "partials/search_results.html" %}</div></div></div>

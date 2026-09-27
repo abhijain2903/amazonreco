@@ -1,0 +1,10 @@
+{% extends "dialogs/_modal.html" %}
+{% block size %}sm{% endblock %}{% block label %}Approve with override{% endblock %}
+{% block mtitle %}Approve with override{% endblock %}{% block msub %}<p>DN {{ dn.dn_no }} · variance {{ ev.variance_h|sar }}</p>{% endblock %}
+{% block form_open %}<form hx-post="/dns/{{ dn.dn_no }}/override/" hx-swap="none">{% endblock %}
+{% block mbody %}
+<div class="banner warn">{% icon 'alert' %}<span class="t">You are approving {{ ev.charged_h|sar }}, which is {{ ev.variance_h|sar }} more than the agreement supports. The override and reason are kept in the audit trail.</span></div>
+<div class="field"><label for="ov-rsn">Reason (required)</label><textarea class="inp" id="ov-rsn" name="reason" rows="3" required placeholder="e.g. Buyer extended the promo by two days; units are valid"></textarea></div>
+{% endblock %}
+{% block mfoot %}<span class="hint"></span><button type="button" class="btn" data-close="modal">Cancel</button><button class="btn pri" type="submit">Approve with override</button>{% endblock %}
+{% block form_close %}</form>{% endblock %}

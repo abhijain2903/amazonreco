@@ -1,0 +1,7 @@
+{% extends "dialogs/_modal.html" %}
+{% block size %}sm{% endblock %}{% block mtitle %}Accept deduction{% endblock %}{% block msub %}<p>{{ p.deduction_h|sar }} on invoice {{ p.invoice_ref }}</p>{% endblock %}
+{% block form_open %}<form hx-post="/pay/{{ p.payment_no }}/accept/" hx-swap="none">{% endblock %}
+{% block mbody %}<div class="banner warn">{% icon 'alert' %}<span class="t">Accepting closes the invoice with a loss of {{ p.deduction_h|sar }}. Finance sees it as a write-off.</span></div>
+<div class="field"><label for="ac-rsn">Reason</label><select class="sel" id="ac-rsn" name="reason"><option>Valid shortage confirmed by warehouse</option><option>Below dispute threshold</option><option>Agreed with Amazon buyer</option></select></div>{% endblock %}
+{% block mfoot %}<span class="hint"></span><button type="button" class="btn" data-close="modal">Cancel</button><button class="btn pri" type="submit">Accept deduction</button>{% endblock %}
+{% block form_close %}</form>{% endblock %}

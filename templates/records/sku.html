@@ -1,0 +1,10 @@
+{% extends "records/_drawer.html" %}
+{% block narrow %}narrow{% endblock %}{% block type %}SKU{% endblock %}{% block title %}{{ s.sku_code }}{% endblock %}
+{% block body %}
+<div class="kv2"><div><span>Model</span><b>{{ s.model_no }}</b></div><div><span>Description</span><b>{{ s.description }}</b></div><div><span>Category</span><b>{% cat s.category %}</b></div><div><span>ASIN</span><b class="mono">{{ s.asin }}</b></div><div><span>EAN</span><b class="mono">{{ s.ean }}</b></div><div><span>Agreed Amazon cost</span><b>{{ s.cost_h|sar }}</b></div><div><span>Free stock (SAP)</span><b>{{ s.free_stock|num }}</b></div><div><span>Stock as of</span><b>{{ s.stock_as_of|fdt }}</b></div></div>
+<h3 class="sect-h">Open purchase orders</h3>
+{% if pos %}<div class="tw"><table class="dt compact"><thead><tr><th>PO #</th><th class="num">Qty</th><th>Stage</th></tr></thead><tbody>{% for p, l in pos %}<tr class="click" hx-get="/records/po/{{ p.po_no }}/" hx-target="#drawer"><td class="mono">{{ p.po_no }}</td><td class="num">{{ l.qty_ordered|num }}</td><td>{% po_chip p %}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="small muted">None.</p>{% endif %}
+<h3 class="sect-h">Promotions</h3>
+{% if promos %}<div class="tw"><table class="dt compact"><thead><tr><th>Ref</th><th>Dates</th><th class="num">Support</th><th>Stage</th></tr></thead><tbody>{% for p, l in promos %}<tr class="click" hx-get="/records/promo/{{ p.mecl_ref }}/" hx-target="#drawer"><td class="mono">{{ p.mecl_ref }}</td><td>{{ p.start|fd }} – {{ p.end|fd }}</td><td class="num">{{ l.support_h|n2 }}</td><td>{% promo_chip p %}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="small muted">None.</p>{% endif %}
+{% endblock %}
+{% block footwrap %}{% endblock %}

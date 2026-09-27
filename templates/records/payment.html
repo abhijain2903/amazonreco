@@ -1,0 +1,10 @@
+{% extends "records/_drawer.html" %}
+{% block narrow %}narrow{% endblock %}{% block type %}Payment · unmatched{% endblock %}{% block title %}{{ p.payment_no }}{% endblock %}{% block chip %}{% chip "To match" "warn" %}{% endblock %}
+{% block body %}
+<div class="banner warn">{% icon 'alert' %}<span class="t"><b>Invoice reference "{{ p.invoice_ref }}" does not match any ME invoice.</b> Amazon sometimes trims or reformats invoice numbers.</span></div>
+<div class="kv2"><div><span>Payment</span><b class="mono">{{ p.payment_no }}</b></div><div><span>Date</span><b>{{ p.remit_date|fd }}</b></div><div><span>Amount</span><b>{{ p.paid_h|sar }}</b></div></div>
+<form id="pm-form"><div class="field"><label for="pm-sel">Match to invoice</label><select class="sel" id="pm-sel" name="invoice_no" {% if not caps.dispute %}disabled{% endif %}>{% for i in invoices %}<option value="{{ i.invoice_no }}" {% if i == guess %}selected{% endif %}>{% if i == guess %}Suggested · {% endif %}{{ i.invoice_no }} · PO {{ i.po.po_no }} · {{ i.total_h|sar }}</option>{% endfor %}</select>
+<span class="help">{% if guess %}Suggested because the amount and invoice digits match.{% else %}No close match found.{% endif %}</span></div></form>
+{% endblock %}
+{% block hint %}R7 runs after matching.{% endblock %}
+{% block foot %}<button class="btn pri" hx-post="/pay/{{ p.payment_no }}/match/" hx-include="#pm-form" hx-swap="none" {% perm 'dispute' %}>{% icon 'link' %}<span>Match payment</span></button>{% endblock %}

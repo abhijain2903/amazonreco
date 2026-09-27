@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="ph"><div><h1>Claims &amp; Credit Notes</h1><p>Send validated claims to the product team and make sure every riyal comes back as a credit note.</p></div>
+<div class="ph-act"><button class="btn" hx-get="/uploads/new/?type=U9" hx-target="#modal" {% perm 'upload' %}>{% icon 'upload' %}<span>Upload credit notes</span></button></div></div>
+<div class="kpis">{% for k in kpis %}<a class="kpi {% if k.alert %}alert{% endif %}" href="{{ k.url }}"><span class="kpi-l">{{ k.l }}</span><span class="kpi-v">{{ k.v }}</span><span class="kpi-s">{{ k.s }}</span></a>{% endfor %}</div>
+<div class="tabs" role="tablist">{% for t in tabs %}<a class="tab {% if t.id == tab %}on{% endif %}" href="?tab={{ t.id }}">{{ t.label }}<span class="ct">{{ t.count }}</span></a>{% endfor %}</div>
+{% if tab == 'toclaim' %}
+  {% if to_claim %}<div class="tw"><table class="dt"><thead><tr><th>MECL ref</th><th>Promotion</th><th>Cat.</th><th>DN #</th><th class="num">Claim SAR</th><th></th></tr></thead><tbody>
+  {% for p in to_claim %}<tr class="click" hx-get="/records/promo/{{ p.mecl_ref }}/?tab=claim" hx-target="#drawer"><td><b class="mono">{{ p.mecl_ref }}</b></td><td>{{ p.name }}</td><td>{% cat p.category %}</td><td class="mono">{{ p.dn.dn_no }}</td><td class="num">{{ p.dn.approved_h|n }}</td>
+  <td><button class="btn sm pri" hx-post="/promos/{{ p.mecl_ref }}/claim/" hx-swap="none" {% perm 'promo' %}>Generate claim</button></td></tr>{% endfor %}</tbody></table></div>
+  {% else %}<div class="tw"><div class="empty"><div class="ei">{% icon 'claim' %}</div><b>No claims to send</b><span>Promotions appear here once their debit note is validated.</span></div></div>{% endif %}
+{% else %}
+  {% if rows %}<div class="tw"><table class="dt"><thead><tr><th>Claim #</th><th>MECL ref</th><th>Cat.</th><th>Sent</th><th class="num">Claim SAR</th><th>CN #</th><th class="num">CN SAR</th><th class="num">Gap SAR</th><th></th></tr></thead><tbody>
+  {% for c in rows %}<tr class="click" hx-get="/records/promo/{{ c.promotion.mecl_ref }}/?tab=claim" hx-target="#drawer"><td><b class="mono">{{ c.claim_no }}</b></td><td class="mono">{{ c.promotion.mecl_ref }}</td><td>{% cat c.promotion.category %}</td><td>{{ c.sent_at|fd }}</td><td class="num">{{ c.amount_h|n }}</td>
+  <td>{% if c.cn_no %}<span class="mono">{{ c.cn_no }}</span>{% else %}<span class="faint">—</span>{% endif %}</td><td class="num">{% if c.cn_h is None %}—{% else %}{{ c.cn_h|n }}{% endif %}</td>
+  <td class="num">{% if c.cn_h is None %}—{% else %}<b class="{% if c.gap_bad %}bad-t{% endif %}">{{ c.gap_h|n }}</b>{% endif %}</td>
+  <td>{% if c.status == 'sent' %}<button class="btn sm pri" hx-get="/claims/{{ c.claim_no }}/cn/" hx-target="#modal" {% perm 'cn' %}>Record CN</button>{% elif c.status == 'shortfall' %}<button class="btn sm" hx-post="/claims/{{ c.claim_no }}/chase/" hx-swap="none" {% perm 'cn' %}>Chase</button>{% elif c.status == 'written_off' %}{% chip "Written off" %}{% else %}{% chip "Closed" "ok" %}{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+  {% else %}<div class="tw"><div class="empty"><div class="ei">{% icon 'check' %}</div><b>Nothing here</b><span>{% if tab == 'shortfall' %}Every credit note matched its claim.{% elif tab == 'sent' %}No claims are waiting for a credit note.{% else %}Closed claims appear here.{% endif %}</span></div></div>{% endif %}
+{% endif %}
+{% endblock %}

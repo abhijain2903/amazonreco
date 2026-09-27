@@ -1,0 +1,2 @@
+<div class="pipe">{% for x in arr %}{% if x.n %}<a href="{{ x.url }}" style="flex:{{ x.n }};background:{{ x.c }};display:block" title="{{ x.l }}: {{ x.n }}" aria-label="{{ x.l }}: {{ x.n }}"></a>{% endif %}{% endfor %}</div>
+<div class="pipe-l">{% for x in arr %}<a href="{{ x.url }}" style="display:inline-flex;align-items:center;gap:6px;color:var(--muted);text-decoration:none"><i style="background:{{ x.c }}"></i>{{ x.l }} <b>{{ x.n }}</b></a>{% endfor %}</div>

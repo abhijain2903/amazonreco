@@ -1,0 +1,63 @@
+{% extends "dialogs/_modal.html" %}
+{% block size %}lg{% endblock %}{% block label %}Upload data{% endblock %}
+{% block mtitle %}Upload data{% endblock %}
+{% block msub %}<p>{% if step == 1 %}Choose what you are uploading.{% else %}{{ tid }} · {{ t.name }}{% endif %}</p>{% endblock %}
+{% block wiz %}<div class="wiz">{% for s in steps %}{% if not forloop.first %}<em></em>{% endif %}<span class="{% if forloop.counter == step %}on{% elif forloop.counter < step %}done{% endif %}"><i>{% if forloop.counter < step %}✓{% else %}{{ forloop.counter }}{% endif %}</i>{{ s }}</span>{% endfor %}</div>{% endblock %}
+{% block mbody %}
+{% if step == 1 %}
+  <div class="utypes">{% for u in utypes %}<button type="button" class="ut pick" hx-get="/uploads/new/?type={{ u.id }}" hx-target="#modal"><div class="top2"><span class="tag">{{ u.id }}</span><h4>{{ u.name }}</h4></div><p>{{ u.src }}</p></button>{% endfor %}</div>
+
+{% elif step == 2 %}
+  <div class="row"><span class="tag">{{ tid }}</span><b>{{ t.name }}</b><span class="muted small">from {{ t.src }}</span><span class="spacer"></span>
+  <button type="button" class="btn sm ghost" hx-get="/uploads/template/{{ tid }}/?back=1" hx-target="#modal">{% icon 'file' %}<span>View template</span></button></div>
+  <form hx-post="/uploads/new/" hx-encoding="multipart/form-data" hx-target="#modal" hx-trigger="change">
+    <input type="hidden" name="type" value="{{ tid }}">
+    <label class="drop" id="drop" for="file-in"><span class="ui">{% icon 'upload' %}</span><b>Drop a CSV or Excel file here</b><span class="small">or click to choose a file · up to 25 MB</span>
+    <input type="file" id="file-in" name="file" accept=".csv,.txt,.xlsx,.xlsm" hidden></label>
+  </form>
+  {% if err %}<div class="banner bad" role="alert">{% icon 'x' %}<span class="t">{{ err }}</span></div>{% endif %}
+  <div class="banner info">{% icon 'zap' %}<span class="t"><b>No file handy?</b> Load a sample built from the current data. It includes a few rows that fail checks, so you can see how errors are handled.
+  <button type="button" class="btn sm" hx-post="/uploads/new/" hx-vals='{"type": "{{ tid }}", "sample": "1"}' hx-target="#modal">Use sample file</button></span></div>
+  <div><p class="sect-h" style="margin-bottom:6px">Columns</p><div class="row">{% for c in cols %}<span class="tag" {% if not c.req %}style="opacity:.6"{% endif %}>{{ c.f }}{% if not c.req %} (optional){% endif %}</span>{% endfor %}</div></div>
+
+{% elif step == 3 %}
+  <div class="row"><span class="pill-note">{% icon 'file' %}{{ b.filename }}</span><span class="muted small">{{ b.rows_total }} rows · {{ b.headers|length }} columns</span></div>
+  {% if dup %}<div class="banner warn">{% icon 'alert' %}<span class="t"><b>This exact file was imported {{ dup.created_at|ago }}</b> by {{ dup.uploaded_by_name }}. Importing again updates the same records; nothing is duplicated.</span></div>{% endif %}
+  {% if err %}<div class="banner bad" role="alert">{% icon 'x' %}<span class="t">{{ err }}</span></div>
+  {% elif missing %}<div class="banner bad">{% icon 'x' %}<span class="t"><b>{{ missing|length }} required column{{ missing|pluralize }} not found.</b> Pick the matching column from your file.</span></div>
+  {% else %}<div class="banner ok">{% icon 'check' %}<span class="t"><b>All required columns matched.</b> Check the sample values, then continue.</span></div>{% endif %}
+  <form id="map-form" hx-post="/uploads/{{ b.pk }}/map/" hx-target="#modal" hx-trigger="change">
+  <div class="tw"><table class="dt compact"><thead><tr><th>Hub field</th><th>Column in your file</th><th>Sample value</th><th>Match</th></tr></thead><tbody>
+  {% for r in maprows %}<tr><td><span class="mono">{{ r.f }}</span>{% if r.req %} <span class="bad-t">*</span>{% endif %}</td>
+  <td><select class="sel" id="map-{{ r.f }}" name="map-{{ r.f }}" aria-label="Column for {{ r.f }}"><option value="-1">Not in file</option>{% for h in b.headers %}<option value="{{ forloop.counter0 }}" {% if r.m.idx == forloop.counter0 %}selected{% endif %}>{{ h }}</option>{% endfor %}</select></td>
+  <td class="mono small">{% if r.sample is None %}—{% else %}{{ r.sample }}{% endif %}</td>
+  <td>{% if r.m.idx < 0 %}{% if r.req %}<span class="map-miss">Missing</span>{% else %}<span class="faint small">Optional</span>{% endif %}{% elif r.m.how == 'auto' %}<span class="map-ok">Auto-matched</span>{% elif r.m.how == 'saved' %}<span class="map-ok">Saved mapping</span>{% else %}<span class="map-man">Set by you</span>{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div></form>
+
+{% elif step == 4 %}
+  <div class="kpis" style="margin:0"><div class="kpi" style="cursor:default"><span class="kpi-l">Rows</span><span class="kpi-v">{{ n }}</span></div>
+  <div class="kpi" style="cursor:default"><span class="kpi-l">Ready</span><span class="kpi-v ok-t">{{ ok }}</span><span class="kpi-s">{{ warn }} with notes</span></div>
+  <div class="kpi {% if err %}alert{% endif %}" style="cursor:default"><span class="kpi-l">Errors</span><span class="kpi-v">{{ err }}</span><span class="kpi-s">{% if err %}Will be skipped{% else %}None{% endif %}</span></div></div>
+  <div class="tw"><table class="dt compact" style="min-width:680px"><thead><tr><th>#</th><th></th>{% for k in key %}<th>{{ k }}</th>{% endfor %}<th>Result</th></tr></thead><tbody>
+  {% for x in prows %}<tr class="{% if x.r.errors %}err{% elif x.r.warnings %}warnrow{% endif %}"><td class="muted">{{ x.r.row_no }}</td><td>{% if x.r.errors %}{% icon 'x' 'ico-bad' %}{% elif x.r.warnings %}{% icon 'alert' 'ico-warn' %}{% else %}{% icon 'check' 'ico-ok' %}{% endif %}</td>
+  {% for v in x.vals %}<td class="mono small">{{ v }}</td>{% endfor %}<td class="small">{% if x.r.errors %}{{ x.r.errors|join:"; " }}{% elif x.r.warnings %}{{ x.r.warnings|join:"; " }}{% else %}Ready{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+  {% if n > 60 %}<p class="small muted">Showing 60 of {{ n }} rows.</p>{% endif %}
+
+{% else %}
+  <div class="allclear" style="padding:24px 0"><div class="big">{% icon 'check' %}</div><b style="color:var(--text);font-size:17px">Import complete</b><span>{{ b.filename }}</span></div>
+  <div class="card"><div class="card-b" style="display:grid;gap:8px">{% for l in b.summary %}<div class="row" style="flex-wrap:nowrap">{% icon 'check' 'ico-ok' %}<span>{{ l }}</span></div>{% endfor %}
+  {% if b.error_count %}<div class="row" style="flex-wrap:nowrap">{% icon 'alert' 'ico-warn' %}<span>{{ b.error_count }} row{{ b.error_count|pluralize }} with errors skipped</span></div>{% endif %}</div></div>
+{% endif %}
+{% endblock %}
+{% block mfoot %}
+{% if step == 1 %}<span class="hint">Nothing is saved until you review the preview and click Import.</span><button type="button" class="btn" data-close="modal">Cancel</button>
+{% elif step == 2 %}<span class="hint">CSV or Excel. Keep one header row.</span><button type="button" class="btn" hx-get="/uploads/new/" hx-target="#modal">Back</button>
+{% elif step == 3 %}<span class="hint">Close header names match automatically. Your choices are remembered for this file layout.</span>
+  <button type="button" class="btn" hx-get="/uploads/new/?type={{ tid }}" hx-target="#modal">Back</button>
+  <button type="button" class="btn pri" hx-post="/uploads/{{ b.pk }}/preview/" hx-target="#modal" {% if missing %}disabled{% endif %}>Preview</button>
+{% elif step == 4 %}<span class="hint">Row numbers match your file.{% if err %} Rows with errors are skipped. Fix them in the file and upload again.{% endif %}</span>
+  <button type="button" class="btn" hx-get="/uploads/{{ b.pk }}/?step=3" hx-target="#modal">Back</button>
+  <button type="button" class="btn pri" hx-post="/uploads/{{ b.pk }}/commit/" hx-target="#modal" {% if not ok %}disabled{% endif %}>Import {{ ok }} row{{ ok|pluralize }}</button>
+{% else %}<span class="hint"></span><button type="button" class="btn" hx-get="/uploads/new/" hx-target="#modal">Upload another</button><a class="btn pri" href="{{ go }}">{% icon 'arrow' %}<span>Go to {{ go_name }}</span></a>
+{% endif %}
+{% endblock %}

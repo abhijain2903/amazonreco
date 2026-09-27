@@ -1,0 +1,11 @@
+{% if dev_login %}
+<form class="role" hx-post="/dev/switch/" hx-trigger="change" hx-swap="none" title="Development only: switch user to see each role">
+  <span class="av">{{ request.user.initials }}</span>
+  <select name="user" aria-label="Signed in as">
+    {% for u in switch_users %}<option value="{{ u.username }}" {% if u.pk == request.user.pk %}selected{% endif %}>{{ u.role_title }} · {{ u.name }}</option>{% endfor %}
+  </select>
+</form>
+{% else %}
+<div class="role"><span class="av">{{ request.user.initials }}</span><span style="padding:0 8px;font-weight:500">{{ request.user.name }}</span>
+<form method="post" action="/logout/" class="inline">{% csrf_token %}<button class="icon-btn" style="border:0" aria-label="Sign out">{% icon 'logout' %}</button></form></div>
+{% endif %}

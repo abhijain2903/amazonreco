@@ -1,0 +1,1 @@
+<div class="tabs" role="tablist">{% for t in dtabs %}<button type="button" role="tab" class="tab {% if t.id == tab %}on{% endif %}" hx-get="{{ base }}?tab={{ t.id }}" hx-target="#drawer" aria-selected="{% if t.id == tab %}true{% else %}false{% endif %}">{{ t.label }}{% if t.n %}<span class="ct">{{ t.n }}</span>{% endif %}</button>{% endfor %}</div>
