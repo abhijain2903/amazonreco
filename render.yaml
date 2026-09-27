@@ -1,0 +1,47 @@
+# One-click demo on Render (https://render.com): New > Blueprint > pick this repo.
+# Free web service + free PostgreSQL, example data loaded on first start, protected by an access code.
+services:
+  - type: web
+    name: me-vendor-hub
+    runtime: docker
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DJANGO_DEBUG
+        value: "false"
+      - key: DJANGO_ALLOWED_HOSTS
+        value: .onrender.com
+      - key: DJANGO_CSRF_TRUSTED_ORIGINS
+        value: https://*.onrender.com
+      - key: HUB_DEV_LOGIN
+        value: "true"
+      - key: HUB_DEMO_PASSWORD
+        sync: false            # Render asks for it when you create the blueprint
+      - key: HUB_DEMO_SIMULATIONS
+        value: "true"
+      - key: HUB_SEED_DEMO
+        value: "true"
+      - key: HUB_RUN_WORKER
+        value: "true"
+      - key: WEB_CONCURRENCY
+        value: "2"
+      - key: HUB_MEDIA_ROOT
+        value: /tmp/media
+      - key: POSTGRES_HOST
+        fromDatabase: { name: me-vendor-hub-db, property: host }
+      - key: POSTGRES_PORT
+        fromDatabase: { name: me-vendor-hub-db, property: port }
+      - key: POSTGRES_DB
+        fromDatabase: { name: me-vendor-hub-db, property: database }
+      - key: POSTGRES_USER
+        fromDatabase: { name: me-vendor-hub-db, property: user }
+      - key: POSTGRES_PASSWORD
+        fromDatabase: { name: me-vendor-hub-db, property: password }
+
+databases:
+  - name: me-vendor-hub-db
+    plan: free
+    databaseName: mehub
+    postgresMajorVersion: "16"

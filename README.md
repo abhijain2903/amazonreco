@@ -45,6 +45,19 @@ docker compose exec web python manage.py seed_demo      # example data (350 SKUs
 open http://localhost:8000
 ```
 
+## Temporary demo URL (Render, free)
+
+`render.yaml` deploys the hub with its own PostgreSQL, loads the example data on first start and runs the job worker
+in the same container. The sign-in page asks for an access code, so the link can be shared safely.
+
+1. Open https://render.com/deploy?repo=https://github.com/abhijain2903/amazonreco (sign in with GitHub and allow
+   Render to read this repository).
+2. Enter an access code for `HUB_DEMO_PASSWORD` and click **Apply**. The first build takes about 5–8 minutes.
+3. Open the `https://me-vendor-hub-xxxx.onrender.com` link Render shows, enter the access code and pick a user.
+
+Free-plan limits: the service sleeps after 15 minutes idle (the next visit takes ~1 minute to wake), uploaded files are
+lost on restart, and the free database expires after 30 days. Fine for a walkthrough; use a paid plan or Docker for UAT.
+
 ## Quick start (local)
 
 ```bash

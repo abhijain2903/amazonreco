@@ -27,6 +27,8 @@ CSRF_TRUSTED_ORIGINS = [o.strip() for o in env("DJANGO_CSRF_TRUSTED_ORIGINS", ""
 DEMO_SIMULATIONS = env_bool("HUB_DEMO_SIMULATIONS", True)
 # Dev sign-in page with a user picker. Must be False in production (use Entra ID).
 DEV_LOGIN = env_bool("HUB_DEV_LOGIN", DEBUG)
+# Optional shared access code for the dev sign-in page (use it on any demo URL reachable from the internet).
+DEMO_PASSWORD = env("HUB_DEMO_PASSWORD", "")
 
 INSTALLED_APPS = [
     "django.contrib.admin",

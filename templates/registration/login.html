@@ -6,6 +6,7 @@
 <h1>Sign in</h1>
 {% if oidc %}<a class="btn pri" href="/oidc/authenticate/">Sign in with your company account</a>{% endif %}
 {% if dev %}<p class="muted small">Development sign-in. Pick a person to see their role's view. This page is switched off in production.</p>
-<form method="post" class="userpick">{% csrf_token %}{% for u in users %}<button name="user" value="{{ u.username }}"><span class="av">{{ u.initials }}</span><span><b>{{ u.name }}</b><small>{{ u.role_title }}</small></span></button>{% empty %}<p class="muted">No users yet. Run <span class="mono">python manage.py seed_demo</span>.</p>{% endfor %}</form>{% endif %}
+{% if err %}<div class="banner bad" role="alert"><span class="t">{{ err }}</span></div>{% endif %}
+<form method="post" class="userpick">{% csrf_token %}{% if need_code %}<div class="field" style="grid-column:1/-1"><label for="code">Access code</label><input class="inp" id="code" name="code" type="password" required autocomplete="current-password"></div>{% endif %}{% for u in users %}<button name="user" value="{{ u.username }}"><span class="av">{{ u.initials }}</span><span><b>{{ u.name }}</b><small>{{ u.role_title }}</small></span></button>{% empty %}<p class="muted">No users yet. Run <span class="mono">python manage.py seed_demo</span>.</p>{% endfor %}</form>{% endif %}
 {% if not oidc and not dev %}<p class="muted">Sign-in is not configured. Set the OIDC_* environment variables.</p>{% endif %}
 </div></div></body></html>

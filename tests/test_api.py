@@ -37,3 +37,12 @@ def test_openapi_schema():
     c.force_login(User.objects.get(username="admin"))
     s = c.get("/api/v1/openapi.json").json()
     assert "/api/v1/purchase-orders" in s["paths"]
+
+
+@override_settings(DEMO_PASSWORD="let-me-in", DEV_LOGIN=True)
+def test_demo_access_code_guards_dev_login():
+    c = Client()
+    r = c.post("/login/", {"user": "faisal", "code": "wrong"})
+    assert r.status_code == 200 and b"access code is not right" in r.content
+    r = c.post("/login/", {"user": "faisal", "code": "let-me-in"})
+    assert r.status_code == 302

@@ -254,12 +254,18 @@ def file_view(request, pk):
 # ---------- sign-in ----------
 @login_not_required
 def login_view(request):
+    err = ""
     if request.method == "POST" and settings.DEV_LOGIN:
-        u = get_object_or_404(User, username=request.POST.get("user"), is_active=True)
-        login(request, u, backend="django.contrib.auth.backends.ModelBackend")
-        return redirect(request.GET.get("next") or _home(u))
+        import hmac
+        if settings.DEMO_PASSWORD and not hmac.compare_digest(request.POST.get("code", ""), settings.DEMO_PASSWORD):
+            err = "That access code is not right."
+        else:
+            u = get_object_or_404(User, username=request.POST.get("user"), is_active=True)
+            login(request, u, backend="django.contrib.auth.backends.ModelBackend")
+            return redirect(request.GET.get("next") or _home(u))
     users = list(User.objects.filter(is_active=True).order_by("date_joined")) if settings.DEV_LOGIN else []
-    return render(request, "registration/login.html", {"users": users, "oidc": settings.OIDC_ENABLED, "dev": settings.DEV_LOGIN})
+    return render(request, "registration/login.html", {"users": users, "oidc": settings.OIDC_ENABLED, "dev": settings.DEV_LOGIN,
+                                                       "need_code": bool(settings.DEMO_PASSWORD), "err": err})
 
 
 def _home(u):

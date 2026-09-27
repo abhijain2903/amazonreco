@@ -13,5 +13,5 @@ RUN DJANGO_SECRET_KEY=build python manage.py collectstatic --noinput \
 USER hub
 
 EXPOSE 8000
-# ASGI so the live-update stream (/events/) does not hold a worker per open browser tab.
-CMD ["gunicorn", "config.asgi:application", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8000", "--timeout", "60", "--access-logfile", "-"]
+# ASGI (gunicorn + uvicorn workers) so the live-update stream (/events/) does not hold a thread per open tab.
+CMD ["sh", "bin/start.sh"]
