@@ -26,7 +26,8 @@ ORDER = ["draft", "submitted", "approved", "live", "waiting_dn", "dn_overdue", "
 
 
 def promo_list(request):
-    tab, view = request.GET.get("tab", "all"), request.GET.get("view", "table")
+    tab = htmx.pick(request, "tab", [k for k, _, _ in GROUPS], "all")
+    view = htmx.pick(request, "view", ["table", "board", "timeline"], "table")
     cat, q = request.GET.get("cat", ""), request.GET.get("q", "").strip()
     cfg, now = get_cfg(), timezone.now()
     allp = list(Promotion.objects.prefetch_related("lines"))
@@ -103,7 +104,7 @@ def dn_panel(dn, p):
 def drawer(request, ref):
     p = get_promo(ref)
     st = stage_of(p)
-    tab = request.GET.get("tab", "models")
+    tab = htmx.pick(request, "tab", ["models", "dn", "claim", "timeline", "notes"], "models")
     dn = DebitNote.objects.filter(agreement_no=p.agreement_no).first() if p.agreement_no else None
     c = Claim.objects.filter(promotion=p).first()
     base = f"/records/promo/{p.mecl_ref}/"
@@ -136,19 +137,19 @@ def drawer(request, ref):
 # ---------- commands ----------
 @require_POST
 def submit(request, ref):
-    p, f = svc.submit_promotion(request.user, ref)
+    p, f = svc.submit_promotion(request.user, ref, request.POST.get("version"))
     return htmx.done(request, f"{p.mecl_ref} submitted", file=f)
 
 
 @require_POST
 def approve(request, ref):
-    p = svc.record_approval(request.user, ref, request.POST.get("agreement", ""))
+    p = svc.record_approval(request.user, ref, request.POST.get("agreement", ""), request.POST.get("version"))
     return htmx.done(request, f"Approval recorded. DN reminder set for {timezone.localtime(p.dn_due):%d %b}")
 
 
 @require_POST
 def reject(request, ref):
-    svc.reject_promotion(request.user, ref)
+    svc.reject_promotion(request.user, ref, request.POST.get("version"))
     return htmx.done(request, f"{ref} marked rejected", "info")
 
 

@@ -29,8 +29,8 @@ OWNER = {"new": "PIC", "confirmed": "Planning", "booked": "Credit", "released": 
 
 
 def pos_list(request):
-    tab = request.GET.get("tab", "new")
-    view = request.GET.get("view", "table")
+    tab = htmx.pick(request, "tab", [k for k, _, _ in TABS], "new")
+    view = htmx.pick(request, "view", ["table", "board"], "table")
     q = request.GET.get("q", "").strip()
     fc = request.GET.get("fc", "")
     cfg = get_cfg()
@@ -90,7 +90,7 @@ def _steps(po, cfg, lines):
 
 def drawer(request, po_no):
     po = get_po(po_no)
-    tab = request.GET.get("tab", "lines")
+    tab = htmx.pick(request, "tab", ["lines", "shipment", "invoice", "checks", "timeline", "notes"], "lines")
     cfg = get_cfg()
     now = timezone.now()
     lines = list(po.lines.select_related("sku"))
@@ -106,6 +106,8 @@ def drawer(request, po_no):
                dtabs=[dict(id="lines", label="Lines", n=len(lines)), dict(id="shipment", label="Shipment"), dict(id="invoice", label="Invoice & payment"),
                       dict(id="checks", label="Checks"), dict(id="timeline", label="Timeline"),
                       dict(id="notes", label="Notes", n=Note.objects.filter(entity="po", entity_id=po.po_no).count())])
+    # The footer hint reads this on every tab, so it must not depend on the Lines tab being open.
+    ctx["issues"] = po_issues(po, cfg, lines) if po.stage == "new" else 0
     if tab == "lines":
         ctx["lrows"] = [dict(l=l, c=line_checks(l, cfg), need_reason=l.decision == "accept" and not line_checks(l, cfg)["price_ok"] and not l.reason) for l in lines]
         ctx["issues"] = sum(1 for r in ctx["lrows"] if r["c"]["tone"] != "ok")
@@ -166,9 +168,9 @@ def _line_values(post):
 @require_POST
 def lines_save(request, po_no):
     """Autosave of the lines form. Only a changed decision re-renders the drawer (it changes qty and reason options)."""
-    svc.save_lines(request.user, po_no, _line_values(request.POST))
+    po = svc.save_lines(request.user, po_no, _line_values(request.POST), request.POST.get("version"))
     changed = request.headers.get("HX-Trigger-Name", "").startswith("d-")
-    return htmx.done(request, refresh=False, drawer=changed)
+    return htmx.done(request, refresh=False, drawer=changed, version=("po-lines-v", po.version))
 
 
 @require_POST
@@ -180,9 +182,10 @@ def accept_green(request, po_no):
 @require_POST
 def confirm(request, po_no):
     vals = _line_values(request.POST)
+    version = request.POST.get("version")
     if vals:
-        svc.save_lines(request.user, po_no, vals)
-    po, f = svc.confirm_po(request.user, po_no, request.POST.get("version"))
+        version = svc.save_lines(request.user, po_no, vals, version).version
+    po, f = svc.confirm_po(request.user, po_no, version)
     return htmx.done(request, f"PO {po_no} confirmed", file=f)
 
 

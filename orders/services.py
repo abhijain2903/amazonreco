@@ -103,12 +103,16 @@ def set_line(user, po_no, line_id, decision=None, qty=None, reason=None):
 
 
 @transaction.atomic
-def save_lines(user, po_no, values):
-    """values: {line_id: (decision|None, qty|None, reason|None)} from the drawer form."""
+def save_lines(user, po_no, values, version=None):
+    """values: {line_id: (decision|None, qty|None, reason|None)} from the drawer form.
+
+    A change bumps the PO version, so another person's older view of the lines is refused (StaleRecord)."""
     require(user, "confirm")
     po = get_po(po_no, lock=True)
+    check_version(po, version)
     if po.stage != "new":
         raise CommandError("This PO is already confirmed.")
+    changed = False
     for l in po_lines(po):
         if str(l.pk) not in values:
             continue
@@ -126,6 +130,10 @@ def save_lines(user, po_no, values):
         if (l.decision, l.qty_confirmed, l.reason) != before:
             l.touched = True
             l.save()
+            changed = True
+    if changed:
+        po.bump()
+        po.save(update_fields=["version", "updated_at"])
     return po
 
 
@@ -140,6 +148,9 @@ def accept_all_green(user, po_no):
             l.decision, l.qty_confirmed, l.reason, l.touched = "accept", l.qty_ordered, "", True
             l.save()
             n += 1
+    if n:
+        po.bump()
+        po.save(update_fields=["version", "updated_at"])
     return n
 
 

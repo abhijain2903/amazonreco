@@ -29,6 +29,8 @@ DEMO_SIMULATIONS = env_bool("HUB_DEMO_SIMULATIONS", True)
 DEV_LOGIN = env_bool("HUB_DEV_LOGIN", DEBUG)
 # Optional shared access code for the dev sign-in page (use it on any demo URL reachable from the internet).
 DEMO_PASSWORD = env("HUB_DEMO_PASSWORD", "")
+# Django admin at /admin/. Switch off on hosts shown to clients; admin work is then done from the server.
+DJANGO_ADMIN = env_bool("HUB_DJANGO_ADMIN", True)
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -59,6 +61,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "core.middleware.SecurityHeadersMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -155,7 +158,8 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = Path(env("HUB_MEDIA_ROOT", str(BASE_DIR / "media")))
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
-    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedStaticFilesStorage" if not DEBUG
+    # Hashed file names in production, so a new release is never served from a browser's cached hub.js / hub.css.
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage" if not DEBUG
                     else "django.contrib.staticfiles.storage.StaticFilesStorage"},
 }
 # For S3-compatible object storage in production, install django-storages and set

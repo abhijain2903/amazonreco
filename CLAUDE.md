@@ -15,7 +15,7 @@ python manage.py migrate
 python manage.py seed_demo --reset           # deterministic example data; users faisal/noura/omar/khalid/reem/priya/tariq/admin, password "demo"
 python manage.py runserver                   # http://127.0.0.1:8000 (dev user-picker login)
 python manage.py procrastinate worker        # background + periodic jobs
-pytest                                       # 47 tests: rules, flows F1-F7, uploads U1-U9, API, smoke (every page + drawer) — needs Postgres
+pytest                                       # 83 tests: rules, flows F1-F7, uploads U1-U9, API, smoke (every page + drawer), defect regressions — needs Postgres
 E2E_BASE_URL=http://127.0.0.1:8000 pytest tests/e2e -m e2e -p no:django   # Playwright; re-seed first
 ```
 DB settings come from `POSTGRES_*` env vars (default db `mehub`, host `localhost`). `DJANGO_DEBUG` defaults to true.
@@ -39,7 +39,17 @@ DB settings come from `POSTGRES_*` env vars (default db `mehub`, host `localhost
 - Client JS is only `static/js/hub.js` (toasts, drawer/modal events, palette, SSE, drag-drop). Keep new UI server-rendered.
 - Upload types U1-U9: columns, synonyms, validation, import and sample files all in `uploads/types.py`.
 - External systems only through adapters in `integrations/connectors.py`; live methods raise `NotImplementedError` until built.
-- Demo switches: `HUB_DEMO_SIMULATIONS` (simulate SAP/Amazon steps), `HUB_DEV_LOGIN` (user picker), `HUB_DEMO_PASSWORD` (access code).
+- Demo switches: `HUB_DEMO_SIMULATIONS` (simulate SAP/Amazon steps), `HUB_DEV_LOGIN` (user picker), `HUB_DEMO_PASSWORD` (access code),
+  `HUB_DJANGO_ADMIN` (false on client-facing hosts: no `/admin/`, no Admin console link).
+- Query-string choices (`tab`, `view`) go through `core.htmx.pick(request, key, allowed, default)` — never index a dict with raw input.
+- Read access follows the same permission as writes: pages for Admin-only areas call `require(user, "settings")`, and the
+  sidebar hides entries via `core.nav.NAV_PERMS`.
+- Every command form sends the record's `version`; autosaving forms get the new version back via `htmx.done(..., version=(input_id, v))`.
+- Line models are ordered by `created_at` so seeded demo data is identical on every database (ids are random UUIDs).
+- CSP (`core.middleware.SecurityHeadersMiddleware`) allows only self-hosted script files, no inline scripts or eval: put
+  behaviour in `static/js/hub.js`, not in `onclick=` / Alpine expressions / htmx `hx-on`.
+- Master data (SKUs, FCs) is never created by a transaction import; unknown codes are row errors. Sample files skip SKUs
+  on flagged lines of new POs (the live R1/R2 demo examples).
 
 ## Before finishing a change
 Run `pytest`; for UI changes also open the affected pages (and the e2e suite after `seed_demo --reset`).

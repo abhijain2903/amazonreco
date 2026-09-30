@@ -15,9 +15,9 @@
 {% block body %}
 {% if tab == 'lines' %}
   {% if po.stage == 'new' %}
-    {% if issues %}<div class="banner warn">{% icon 'alert' %}<span class="t"><b>{{ issues }} line{{ issues|pluralize }} need a decision.</b> Green lines are ready to accept. Amber is short on stock. Red has a cost that differs from the agreed price list.</span></div>
+    {% if issues %}<div class="banner warn">{% icon 'alert' %}<span class="t"><b>{{ issues }} line{{ issues|pluralize }} need{{ issues|pluralize:"s," }} a decision.</b> Green lines are ready to accept. Amber is short on stock. Red has a cost that differs from the agreed price list.</span></div>
     {% else %}<div class="banner ok">{% icon 'check' %}<span class="t"><b>All lines passed price and stock checks.</b> Confirm to send the acknowledgement.</span></div>{% endif %}
-    <form id="po-lines" hx-post="/pos/{{ po.po_no }}/lines/" hx-trigger="change" hx-swap="none">
+    <form id="po-lines" hx-post="/pos/{{ po.po_no }}/lines/" hx-trigger="change" hx-swap="none"><input type="hidden" id="po-lines-v" name="version" value="{{ po.version }}">
     <div class="tw lines-in"><table class="dt" style="min-width:980px"><thead><tr><th></th><th>Model</th><th class="num">Ordered</th><th class="num">Free stock</th><th class="num">PO cost</th><th class="num">Agreed</th><th>Decision</th><th class="num">Confirm qty</th><th>Reason</th></tr></thead><tbody>
     {% for r in lrows %}{% with l=r.l c=r.c %}
     <tr class="{% if c.tone == 'bad' %}err{% elif c.tone == 'warn' %}warnrow{% endif %}">
@@ -105,8 +105,9 @@
 
 {% block foot %}
 {% if po.stage == 'new' %}
+  {% if tab != 'lines' %}<input type="hidden" id="po-confirm-v" name="version" value="{{ po.version }}">{% endif %}
   <button class="btn" hx-post="/pos/{{ po.po_no }}/accept-green/" hx-swap="none" {% perm 'confirm' %}>Accept all green</button>
-  <button class="btn pri" hx-post="/pos/{{ po.po_no }}/confirm/" hx-include="#po-lines" hx-vals='{"version": "{{ po.version }}"}' hx-swap="none" {% perm 'confirm' %}>{% icon 'send' %}<span>Confirm PO</span></button>
+  <button class="btn pri" hx-post="/pos/{{ po.po_no }}/confirm/" hx-include="{% if tab == 'lines' %}#po-lines{% else %}#po-confirm-v{% endif %}" hx-swap="none" {% perm 'confirm' %}>{% icon 'send' %}<span>Confirm PO</span></button>
 {% elif po.stage == 'confirmed' %}
   <form hx-post="/pos/{{ po.po_no }}/book/" hx-swap="none" class="row" style="flex-wrap:nowrap">
     <input type="hidden" name="version" value="{{ po.version }}">

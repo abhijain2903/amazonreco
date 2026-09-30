@@ -23,5 +23,5 @@
 {% block foot %}
 <button class="btn" hx-post="/integrations/{{ c.key }}/test/" hx-swap="none" {% if mode == 'off' or mode == 'manual' %}disabled{% endif %}>{% icon 'plug' %}<span>Test connection</span></button>
 <button class="btn" hx-post="/integrations/{{ c.key }}/sync/" hx-swap="none" {% if mode == 'off' or mode == 'manual' %}disabled{% endif %} {% perm 'settings' %}>{% icon 'refresh' %}<span>Sync now</span></button>
-<button class="btn pri" hx-post="/integrations/{{ c.key }}/save/" hx-include="#conn-form" hx-swap="none" {% perm 'settings' %}>Save</button>
+<button class="btn pri" hx-post="/integrations/{{ c.key }}/save/" hx-include="#conn-form" hx-vals='{"version": "{{ c.version }}"}' hx-swap="none" {% perm 'settings' %}>Save</button>
 {% endblock %}

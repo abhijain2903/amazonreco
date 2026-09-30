@@ -7,7 +7,7 @@ from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from core.services import CommandError, audit, next_number, require, save_file
+from core.services import CommandError, audit, check_version, next_number, require, save_file
 from rules import engine
 from rules.services import get_cfg
 
@@ -73,9 +73,10 @@ def _submit(p, at, user=None, name=None):
 
 
 @transaction.atomic
-def submit_promotion(user, ref):
+def submit_promotion(user, ref, version=None):
     require(user, "promo")
     p = get_promo(ref, lock=True)
+    check_version(p, version)
     if p.stage != "draft":
         raise CommandError("Only drafts can be submitted.")
     _submit(p, timezone.now(), user)
@@ -95,9 +96,10 @@ def _approve(p, agreement, at, user=None, name=None):
 
 
 @transaction.atomic
-def record_approval(user, ref, agreement):
+def record_approval(user, ref, agreement, version=None):
     require(user, "promo")
     p = get_promo(ref, lock=True)
+    check_version(p, version)
     agreement = (agreement or "").strip()
     if p.stage != "submitted":
         raise CommandError("Only submitted promotions can be approved.")
@@ -115,9 +117,10 @@ def record_approval(user, ref, agreement):
 
 
 @transaction.atomic
-def reject_promotion(user, ref):
+def reject_promotion(user, ref, version=None):
     require(user, "promo")
     p = get_promo(ref, lock=True)
+    check_version(p, version)
     if p.stage != "submitted":
         raise CommandError("Only submitted promotions can be rejected.")
     p.stage = "rejected"

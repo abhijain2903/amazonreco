@@ -21,6 +21,7 @@ def hub(request):
         "unread": Notification.objects.filter(read=False).count(),
         "dev_login": settings.DEV_LOGIN,
         "demo": settings.DEMO_SIMULATIONS,
+        "admin_console": settings.DJANGO_ADMIN and user.is_staff,
         "role_titles": ROLE_TITLES,
         "switch_users": _switch_users() if settings.DEV_LOGIN else [],
     }

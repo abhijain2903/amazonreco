@@ -61,19 +61,19 @@
 
 {% block foot %}
 {% if st == 'draft' %}
-  <button class="btn pri" hx-post="/promos/{{ p.mecl_ref }}/submit/" hx-swap="none" {% perm 'promo' %}>{% icon 'send' %}<span>Submit to Amazon</span></button>
+  <button class="btn pri" hx-post="/promos/{{ p.mecl_ref }}/submit/" hx-vals='{"version": "{{ p.version }}"}' hx-swap="none" {% perm 'promo' %}>{% icon 'send' %}<span>Submit to Amazon</span></button>
 {% elif st == 'submitted' %}
-  <button class="btn danger" hx-post="/promos/{{ p.mecl_ref }}/reject/" hx-swap="none" hx-confirm="Mark {{ p.mecl_ref }} as rejected by Amazon?" {% perm 'promo' %}>Mark rejected</button>
-  {% if tab == 'models' %}<button class="btn pri" hx-post="/promos/{{ p.mecl_ref }}/approve/" hx-include="#agr-in" hx-swap="none" {% perm 'promo' %}>{% icon 'check' %}<span>Record approval</span></button>
+  <button class="btn danger" hx-post="/promos/{{ p.mecl_ref }}/reject/" hx-vals='{"version": "{{ p.version }}"}' hx-swap="none" hx-confirm="Mark {{ p.mecl_ref }} as rejected by Amazon?" {% perm 'promo' %}>Mark rejected</button>
+  {% if tab == 'models' %}<button class="btn pri" hx-post="/promos/{{ p.mecl_ref }}/approve/" hx-include="#agr-in" hx-vals='{"version": "{{ p.version }}"}' hx-swap="none" {% perm 'promo' %}>{% icon 'check' %}<span>Record approval</span></button>
   {% else %}<button class="btn pri" hx-get="{{ base }}?tab=models" hx-target="#drawer">Record approval</button>{% endif %}
 {% elif st == 'waiting_dn' %}
   {% if demo and missing_sold %}<button class="btn" hx-post="/promos/{{ p.mecl_ref }}/sold/" hx-swap="none" {% perm 'promo' %}>{% icon 'refresh' %}<span>Pull sold units (simulated)</span></button>{% endif %}
 {% elif st == 'dn_overdue' %}
   <button class="btn pri" hx-post="/promos/{{ p.mecl_ref }}/chase/" hx-swap="none" {% perm 'promo' %}>Log chase with Amazon</button>
 {% elif st == 'dn_received' %}
-  {% if ev.status == 'to_validate' %}<button class="btn pri" hx-post="/dns/{{ dn.dn_no }}/approve/" hx-swap="none" {% perm 'dn' %}>{% icon 'check' %}<span>Approve debit note</span></button>
+  {% if ev.status == 'to_validate' %}<button class="btn pri" hx-post="/dns/{{ dn.dn_no }}/approve/" hx-vals='{"version": "{{ dn.version }}"}' hx-swap="none" {% perm 'dn' %}>{% icon 'check' %}<span>Approve debit note</span></button>
   {% else %}<button class="btn" hx-get="/dns/{{ dn.dn_no }}/override/" hx-target="#modal" {% perm 'override' %}>Approve with override</button>
-  <button class="btn pri" hx-post="/dns/{{ dn.dn_no }}/dispute/" hx-swap="none" {% perm 'dn' %}>Approve expected, dispute the rest</button>{% endif %}
+  <button class="btn pri" hx-post="/dns/{{ dn.dn_no }}/dispute/" hx-vals='{"version": "{{ dn.version }}"}' hx-swap="none" {% perm 'dn' %}>Approve expected, dispute the rest</button>{% endif %}
 {% elif st == 'dn_validated' %}
   <button class="btn pri" hx-post="/promos/{{ p.mecl_ref }}/claim/" hx-swap="none" {% perm 'promo' %}>{% icon 'send' %}<span>Generate claim</span></button>
 {% elif st == 'claimed' %}

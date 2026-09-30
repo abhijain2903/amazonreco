@@ -16,6 +16,13 @@ NAV = [
     ("Admin", [("settings", "/settings/", "Settings", "sliders")]),
 ]
 TITLES = {k: label for _, items in NAV for k, _, label, _ in items}
+# Menu entries that need a permission (identity/permissions.py); the rest are open to every role.
+NAV_PERMS = {"uploads": "upload", "integrations": "settings", "settings": "settings"}
+
+
+def visible(user, key):
+    from identity.permissions import can
+    return key not in NAV_PERMS or can(user, NAV_PERMS[key])
 
 
 def section_for(path):
@@ -42,6 +49,7 @@ def badges(user):
 def build(user, path):
     b = badges(user)
     cur = section_for(path)
-    return [{"group": g, "items": [{"key": k, "url": u, "label": l, "icon": i, "on": k == cur,
+    menu = [{"group": g, "items": [{"key": k, "url": u, "label": l, "icon": i, "on": k == cur,
                                      "badge": b.get(k, (0, False))[0], "hot": b.get(k, (0, False))[1] and k != cur}
-                                    for k, u, l, i in items]} for g, items in NAV]
+                                    for k, u, l, i in items if visible(user, k)]} for g, items in NAV]
+    return [g for g in menu if g["items"]]

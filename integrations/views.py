@@ -4,7 +4,7 @@ from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_POST
 
 from core import htmx
-from core.services import CommandError, audit, require
+from core.services import CommandError, audit, check_version, require
 
 from .connectors import FIELDS, SECRET_WORDS, ensure_connectors, get_adapter
 from .models import MODES, Connector, SyncRun
@@ -19,6 +19,7 @@ def slug(label):
 
 
 def page(request):
+    require(request.user, "settings")
     ensure_connectors()
     conns = list(Connector.objects.all())
     for c in conns:
@@ -28,6 +29,7 @@ def page(request):
 
 
 def drawer(request, key):
+    require(request.user, "settings")
     c = get_object_or_404(Connector, key=key)
     cfg = FIELDS.get(key, {"modes": [c.mode], "data": []})
     mode = request.GET.get("mode") or c.mode
@@ -47,6 +49,7 @@ def drawer(request, key):
 def save(request, key):
     require(request.user, "settings")
     c = get_object_or_404(Connector, key=key)
+    check_version(c, request.POST.get("version"))
     cfg = FIELDS.get(key, {"modes": [c.mode]})
     mode = request.POST.get("mode", c.mode)
     if mode not in cfg["modes"]:
@@ -59,6 +62,7 @@ def save(request, key):
     before = c.mode
     c.settings = {**c.settings, mode: vals, "schedule": request.POST.get("schedule", c.settings.get("schedule", SCHEDULES[0]))}
     c.mode = mode
+    c.bump()
     c.save()
     audit("connector", c.key, f"{c.name} saved: mode {MODE_LABELS.get(before, before)} → {MODE_LABELS.get(mode, mode)}", request.user,
           action="configure", before={"mode": before}, after={"mode": mode, **vals})
@@ -68,6 +72,7 @@ def save(request, key):
 
 @require_POST
 def test(request, key):
+    require(request.user, "settings")
     c = get_object_or_404(Connector, key=key)
     ok, msg = get_adapter(key).test_connection()
     SyncRun.objects.create(connector=c, kind="test", ok=ok, message=msg)

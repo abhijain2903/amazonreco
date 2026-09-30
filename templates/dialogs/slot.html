@@ -10,5 +10,5 @@
 <div class="field"><label for="sl-win">Time window</label><select class="sel" id="sl-win" name="window"><option>08:00–12:00</option><option>12:00–16:00</option><option>16:00–20:00</option></select></div></div>
 <div class="kv2"><div><span>Cartons</span><b>{{ sh.cartons }}</b></div><div><span>Units</span><b>{{ units|num }}</b></div><div><span>Truck ships</span><b>{{ sh.ship_date|fdt }}</b></div></div>
 {% endblock %}
-{% block mfoot %}<span class="hint"></span><button type="button" class="btn" data-close="modal">Cancel</button><button class="btn pri" type="submit">Save slot</button>{% endblock %}
+{% block mfoot %}<span class="hint"></span><button type="button" class="btn" data-close="modal">Cancel</button><button class="btn pri" type="submit" {% perm 'ship' %}>Save slot</button>{% endblock %}
 {% block form_close %}</form>{% endblock %}

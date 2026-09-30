@@ -18,7 +18,7 @@ TABS = [("toclaim", "To claim"), ("sent", "Waiting for CN"), ("shortfall", "Shor
 
 
 def claim_list(request):
-    tab = request.GET.get("tab", "toclaim")
+    tab = htmx.pick(request, "tab", [k for k, _ in TABS], "toclaim")
     to_claim = []
     for p in Promotion.objects.filter(stage="dn_validated"):
         if stage_of(p) == "dn_validated":

@@ -5,15 +5,19 @@ from django.http import HttpResponse
 from django.shortcuts import render
 
 
-def done(request, toast=None, tone="ok", file=None, close_modal=False, refresh=True, drawer=True, open_drawer=None, modal=None):
+def done(request, toast=None, tone="ok", file=None, close_modal=False, refresh=True, drawer=True, open_drawer=None, modal=None,
+         version=None):
     """Finish a command.
 
     - toast: message shown bottom right
     - file: a GeneratedFile to show in the file dialog (acknowledgement, ASN, invoice, claim)
     - modal: (template, context) to show in the dialog area instead
     - open_drawer: URL of a record to open after the command
+    - version: (input id, new version) for a form that stays open, so its next autosave is not refused as stale
     """
     triggers = {}
+    if version:
+        triggers["version"] = {"id": version[0], "v": version[1]}
     if toast:
         triggers["toast"] = {"msg": toast, "tone": tone}
     if refresh:
@@ -44,3 +48,9 @@ def _rows(content):
 
 def is_htmx(request):
     return bool(request.headers.get("HX-Request"))
+
+
+def pick(request, key, allowed, default):
+    """A query-string choice (tab, view) limited to the allowed values; anything else falls back to the default."""
+    v = request.GET.get(key, default)
+    return v if v in allowed else default

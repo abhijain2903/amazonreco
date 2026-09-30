@@ -1,5 +1,6 @@
 import time
 from datetime import timedelta
+from urllib.parse import quote
 
 from django.conf import settings
 from django.contrib.auth import login, logout
@@ -28,8 +29,8 @@ from rules.services import rule_rows, update_rule
 from . import htmx
 from .actions import action_items
 from .models import AuditEvent, GeneratedFile, Note, Notification
-from .nav import NAV
-from .services import CommandError, peek_number
+from .nav import NAV, visible
+from .services import CommandError, peek_number, require
 
 
 # ---------- dashboard ----------
@@ -90,7 +91,7 @@ def dashboard(request):
 # ---------- action center ----------
 def action(request):
     mine = request.GET.get("mine", "1") == "1"
-    tab = request.GET.get("tab", "all")
+    tab = htmx.pick(request, "tab", ["all", "today", "mismatch", "waiting"], "all")
     everyone = action_items(request.user, mine=False)
     base = action_items(request.user, mine=True) if mine else everyone
     eod = timezone.localtime().replace(hour=23, minute=59, second=59)
@@ -145,10 +146,12 @@ def _record_url(t, i, tab=""):
 
 
 def events(request):
-    """Server-sent events: tells the browser when anything changed. Each stream lasts ~25 s; browsers reconnect.
+    """Server-sent events: tells the browser when anything changed. One subscription per tab; the browser reconnects
+    when a stream ends.
 
-    Under ASGI (production: gunicorn + uvicorn workers) the stream is async, so an open tab does not hold a thread.
-    Under WSGI (runserver) it falls back to a plain generator.
+    Under ASGI (production: gunicorn + uvicorn workers) the stream is async, so an open tab does not hold a thread
+    and a stream can stay open ~5 minutes. Under WSGI (runserver) it falls back to a plain generator that ends after
+    ~25 s, because there each open stream holds a thread.
     """
     latest = lambda: AuditEvent.objects.aggregate(m=Max("id"))["m"] or 0
 
@@ -168,7 +171,7 @@ def events(request):
         alatest = sync_to_async(latest)
         last = await alatest()
         yield "retry: 3000\n\n"
-        for _ in range(12):
+        for _ in range(150):
             await asyncio.sleep(2)
             m = await alatest()
             yield f"event: changed\ndata: {m}\n\n" if m != last else ": ping\n\n"
@@ -187,7 +190,7 @@ def search(request):
     add = lambda g, label, sub, url, ic: res.append(dict(g=g, label=label, sub=sub, url=url, icon=ic))
     for _, items in NAV:
         for key, url, label, ic in items:
-            if not q or q.lower() in label.lower():
+            if visible(request.user, key) and (not q or q.lower() in label.lower()):
                 res.append(dict(g="Go to", label=label, sub="", url=url, icon=ic, nav=True))
     if q:
         ql = q.lower()
@@ -221,7 +224,15 @@ def record(request, kind, key):
              "sku": sku_drawer, "conn": conn_drawer}
     if kind not in views:
         raise Http404
+    if not htmx.is_htmx(request):
+        # A bookmarked or shared record link: show the record's list page and open the drawer on top of it (hub.js).
+        page = RECORD_PAGES[kind]
+        return redirect(f"{page}{'&' if '?' in page else '?'}open={quote(request.get_full_path())}")
     return views[kind](request, key)
+
+
+RECORD_PAGES = {"po": "/pos/?tab=all", "promo": "/promos/", "dn": "/dns/", "payment": "/pay/", "dispute": "/pay/?tab=disputes",
+                "sku": "/pos/?tab=all", "conn": "/integrations/"}
 
 
 def sku_drawer(request, key):
@@ -254,6 +265,8 @@ def file_view(request, pk):
 # ---------- sign-in ----------
 @login_not_required
 def login_view(request):
+    if request.user.is_authenticated:
+        return redirect(_home(request.user))
     err = ""
     if request.method == "POST" and settings.DEV_LOGIN:
         import hmac
@@ -300,9 +313,11 @@ def healthz(request):
 
 # ---------- settings ----------
 def settings_page(request):
-    tab = request.GET.get("tab", "skus")
-    ctx = {"tab": tab, "tabs": [("skus", "SKU master"), ("prices", "Price list"), ("rules", "Rules & tolerances"), ("cats", "Categories"),
-                                ("fcs", "Amazon FCs"), ("users", "Users & roles"), ("notify", "Notifications"), ("numbering", "Numbering")]}
+    require(request.user, "settings")
+    tabs = [("skus", "SKU master"), ("prices", "Price list"), ("rules", "Rules & tolerances"), ("cats", "Categories"),
+            ("fcs", "Amazon FCs"), ("users", "Users & roles"), ("notify", "Notifications"), ("numbering", "Numbering")]
+    tab = htmx.pick(request, "tab", [k for k, _ in tabs], "skus")
+    ctx = {"tab": tab, "tabs": tabs}
     if tab in ("skus", "prices"):
         q = request.GET.get("q", "").strip()
         qs = Sku.objects.all()
@@ -338,6 +353,13 @@ def settings_page(request):
 def _open_prices(skus):
     from catalog.models import Price
     return Price.objects.filter(sku__in=list(skus), valid_to__isnull=True)
+
+
+@require_POST
+def fc_add(request):
+    from catalog.services import add_fc
+    fc = add_fc(request.user, request.POST.get("code"), request.POST.get("name"), request.POST.get("city"))
+    return htmx.done(request, f"FC {fc.code} added", drawer=False)
 
 
 @require_POST

@@ -23,6 +23,7 @@ urlpatterns = [
     path("healthz", views.healthz),
     path("settings/", views.settings_page),
     path("settings/rules/<str:rule_id>/", views.rule_update),
+    path("settings/fcs/add/", views.fc_add),
     path("pos/", include("orders.urls")),
     path("ship/", include("fulfilment.urls")),
     path("pay/", include("payments.urls")),

@@ -144,8 +144,10 @@ def validate(tid, o, ctx, cfg):
             e.append(f"ASIN {o['asin']} is not in the SKU master. Add it with U1 first")
         if exists:
             w.append("PO already imported. Row will be skipped")
+        # Master data (SKUs, FCs) is never created as a side effect of a transaction import: a typo in a
+        # Vendor Central export must not add a fulfilment centre. An admin adds new FCs in Settings → Amazon FCs.
         if not FulfilmentCentre.objects.filter(code=o["fc_code"]).exists():
-            w.append(f"New FC code {o['fc_code']}")
+            e.append(f"FC code {o['fc_code']} is not in the FC master. An admin adds it in Settings → Amazon FCs")
         if s and not exists:
             ok, _ = engine.price_check(to_h(o["unit_cost_sar"]), s.cost_h, cfg)
             if not ok:
@@ -170,6 +172,8 @@ def validate(tid, o, ctx, cfg):
         if Payment.objects.filter(payment_no=o["payment_no"]).exists():
             e.append(f"Payment {o['payment_no']} already imported")
         elif not find_invoice(o["invoice_no"]):
+            # A warning, not an error: Amazon often reformats invoice numbers, and an unmatched payment is a
+            # designed state ("To match"). Unknown master data (SKU, FC) and unknown claims (U9) are errors.
             w.append(f"Invoice {o['invoice_no']} not found. Payment will wait in \"To match\"")
         elif (num(o["deduction_sar"]) or 0) > 0:
             w.append(f"Short by {num(o['deduction_sar']):,.2f}")
@@ -270,7 +274,7 @@ def apply(tid, rows, user):
             if PurchaseOrder.objects.filter(po_no=no).exists():
                 skipped += len(ls)
                 continue
-            fc, _ = FulfilmentCentre.objects.get_or_create(code=ls[0]["fc_code"], defaults={"name": ls[0]["fc_code"], "city": ""})
+            fc = FulfilmentCentre.objects.get(code=ls[0]["fc_code"])  # validated above: unknown FCs are errors
             od = parse_date(ls[0]["order_date"]) or now
             po = create_po(no, fc, od, max(od + timedelta(days=2), now + timedelta(hours=6)),
                            [((resolve_sku(o["asin"]) or resolve_sku(o.get("model_no"))), int(num(o["qty_ordered"])), to_h(o["unit_cost_sar"])) for o in ls],
@@ -280,7 +284,7 @@ def apply(tid, rows, user):
             issues += 1 if notify_issues(po) else 0
             run_po_checks.defer(po_no=no)
         lines += [f"{created} purchase orders created, {len(rows) - skipped} lines checked",
-                  f"{issues} PO{'' if issues == 1 else 's'} need attention in the Action Center"]
+                  f"{issues} PO{' needs' if issues == 1 else 's need'} attention in the Action Center"]
     elif tid == "U5":
         from fulfilment.services import make_delivery
         from orders.models import PurchaseOrder
@@ -348,10 +352,17 @@ def _code(rnd, n):
     return "".join(rnd.choice(alnum) for _ in range(n))
 
 
+def _flagged_skus():
+    """SKUs on a failing line of a PO awaiting confirmation. Those lines are the live R1/R2 examples (and real work
+    for the PIC), so a generated sample file must never touch their price or stock."""
+    from orders.models import PoLine
+    from orders.services import line_checks
+    return {l.sku_id for l in PoLine.objects.filter(po__stage="new").select_related("sku") if line_checks(l)["tone"] != "ok"}
+
+
 def sample_rows(tid, dry=False):
     from claims.models import Claim
     from orders.models import PurchaseOrder
-    from orders.services import line_checks
     from payments.models import Payment
     from promotions.models import Promotion
     from promotions.services import stage_of
@@ -367,22 +378,13 @@ def sample_rows(tid, dry=False):
         rows.append([f"ME{10001 + n}", f"PA-WH{rnd.randint(1100, 1300)}B", "B0" + _code(rnd, 8), "PA", "628" + str(rnd.randint(10**9, 10**10 - 1)), "Wireless headphones"])
         rows.append([f"ME{10002 + n}", f"DI-LN{rnd.randint(800, 990)}", "B0" + _code(rnd, 8), "DI", "628" + str(rnd.randint(10**9, 10**10 - 1)), "Camera lens"])
     elif tid == "U2":
-        for po in PurchaseOrder.objects.filter(stage="new"):
-            bad = next((l for l in po.lines.select_related("sku") if not line_checks(l)["price_ok"]), None)
-            if bad:
-                rows.append([bad.sku.sku_code, f"{bad.cost_h / 100:.2f}", today, ""])
-                break
-        for s in Sku.objects.all()[10:15]:
+        for s in Sku.objects.exclude(pk__in=_flagged_skus())[10:15]:
             rows.append([s.sku_code, f"{s.cost_h / 100:.2f}", today, ""])
     elif tid == "U3":
-        for po in PurchaseOrder.objects.filter(stage="new"):
-            for l in po.lines.select_related("sku"):
-                if not line_checks(l)["stock_ok"]:
-                    rows.append([l.sku.sku_code, l.qty_ordered + 40])
-        for s in Sku.objects.all()[20:24]:
+        for s in Sku.objects.exclude(pk__in=_flagged_skus())[20:24]:
             rows.append([s.sku_code, s.free_stock + 10])
     elif tid == "U4":
-        pool = list(Sku.objects.filter(category__in=["PA", "DI", "HAV"]))
+        pool = list(Sku.objects.filter(category__in=["PA", "DI", "HAV"]).exclude(pk__in=_flagged_skus()))
         fcs = list(FulfilmentCentre.objects.values_list("code", flat=True)) or ["RUH-FC1"]
         we, ws = in_days(10), in_days(3)
         pos = []

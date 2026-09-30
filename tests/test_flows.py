@@ -1,4 +1,6 @@
 """End-to-end flows F1-F7 through the real views (HTMX requests), on the example data."""
+import re
+
 import pytest
 from django.db import connection
 
@@ -26,7 +28,7 @@ def test_f1_confirm_po_with_flagged_lines(as_user):
     po = next(p for p in PurchaseOrder.objects.filter(stage="new") if po_issues(p))
     pic = as_user("faisal")
     r = pic.get(f"/records/po/{po.po_no}/?tab=lines")
-    assert r.status_code == 200 and b"need a decision" in r.content
+    assert r.status_code == 200 and re.search(rb"lines? needs? a decision", r.content)
     # Accept a red (price) line without a reason: blocked
     red = next((l for l in po.lines.select_related("sku") if not line_checks(l)["price_ok"]), None)
     if red:

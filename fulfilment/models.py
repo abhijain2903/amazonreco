@@ -18,6 +18,9 @@ class SapDeliveryLine(Base):
     qty = models.IntegerField()
     asn_qty = models.IntegerField(null=True, blank=True, help_text="Draft ASN quantity edited by the user")
 
+    class Meta:
+        ordering = ["created_at"]  # creation order: stable across databases (ids are random UUIDs)
+
 
 class Shipment(Base):
     """The ASN sent to Amazon, plus its Carrier Central delivery slot."""
@@ -37,3 +40,6 @@ class ShipmentLine(Base):
     shipment = models.ForeignKey(Shipment, on_delete=models.CASCADE, related_name="lines")
     sku = models.ForeignKey(Sku, on_delete=models.PROTECT)
     qty = models.IntegerField()
+
+    class Meta:
+        ordering = ["created_at"]  # creation order: stable across databases (ids are random UUIDs)

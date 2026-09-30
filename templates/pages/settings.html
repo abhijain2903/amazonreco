@@ -40,6 +40,13 @@
 <div class="tw"><table class="dt"><thead><tr><th>Code</th><th>Name</th><th>City</th><th class="num">Open POs</th></tr></thead><tbody>
 {% for f, n in fcs %}<tr><td><b class="mono">{{ f.code }}</b></td><td>{{ f.name }}</td><td>{{ f.city }}</td><td class="num">{{ n }}</td></tr>{% endfor %}</tbody></table></div>
 <p class="small faint" style="margin-top:8px">Example FC codes. Replace with the Amazon.sa ship-to codes from Vendor Central.</p>
+<form class="row" style="margin-top:12px;gap:8px;flex-wrap:wrap" hx-post="/settings/fcs/add/" hx-swap="none" aria-label="Add a fulfilment centre">
+  <input class="inp sm" name="code" placeholder="FC code, e.g. JED-FC2" required aria-label="FC code">
+  <input class="inp sm" name="name" placeholder="Name" required aria-label="Name">
+  <input class="inp sm" name="city" placeholder="City" aria-label="City">
+  <button class="btn sm pri" type="submit" {% perm 'settings' %}>{% icon 'plus' %}<span>Add FC</span></button>
+</form>
+<p class="small faint" style="margin-top:6px">PO imports (U4) reject FC codes that are not listed here, so a typo in a Vendor Central export cannot create a fulfilment centre.</p>
 
 {% elif tab == 'users' %}
 <div class="tw"><table class="dt"><thead><tr><th>Permission</th>{% for k, t in roles %}<th style="text-align:center">{{ t }}</th>{% endfor %}</tr></thead><tbody>

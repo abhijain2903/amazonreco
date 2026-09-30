@@ -118,7 +118,11 @@ def test_palette_and_role_switch(page):
     sign_in(page, "priya")
     page.keyboard.press("Control+k")
     page.locator("#pal input").wait_for()
-    page.keyboard.type("MECL")
-    page.wait_for_timeout(500)
+    # Keystrokes sent the instant the palette HTML lands can arrive before HTMX has attached the input's
+    # hx-trigger listener (no search request is ever made). Wait until HTMX has initialised the element.
+    page.wait_for_function("() => { const el = document.querySelector('#pal-in'); return !!(el && el['htmx-internal-data'] && el['htmx-internal-data'].initHash); }")
+    page.locator("#pal input").press_sequentially("MECL")
+    # Wait for the debounced search (150 ms) and its response rather than a fixed sleep.
+    page.locator("#pal-r .pal-i", has_text="MECL").first.wait_for(timeout=5000)
     assert page.locator("#pal").inner_text().count("MECL") > 0
     page.keyboard.press("Escape")

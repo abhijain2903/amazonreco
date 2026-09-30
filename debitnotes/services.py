@@ -4,7 +4,7 @@ from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
 
-from core.services import CommandError, audit, fmt_sar, next_number, notify, require
+from core.services import CommandError, audit, check_version, fmt_sar, next_number, notify, require
 from promotions.models import Promotion
 from rules import engine
 from rules.services import get_cfg
@@ -77,9 +77,10 @@ def _validate(dn, at, user=None, name=None, mode="approve", reason=""):
 
 
 @transaction.atomic
-def approve(user, dn_no):
+def approve(user, dn_no, version=None):
     require(user, "dn")
     dn = get_dn(dn_no, lock=True)
+    check_version(dn, version)
     ev = evaluate(dn)
     if dn.validated or ev["status"] != "to_validate":
         raise CommandError("This debit note does not match the agreement. Dispute it or approve with an override.")
@@ -87,20 +88,22 @@ def approve(user, dn_no):
 
 
 @transaction.atomic
-def approve_override(user, dn_no, reason):
+def approve_override(user, dn_no, reason, version=None):
     require(user, "override")
     if not (reason or "").strip():
         raise CommandError("Enter a reason for the override.")
     dn = get_dn(dn_no, lock=True)
+    check_version(dn, version)
     if dn.validated or evaluate(dn)["status"] != "mismatch":
         raise CommandError("Only mismatched, unvalidated debit notes need an override.")
     return _validate(dn, timezone.now(), user, mode="override", reason=reason.strip())
 
 
 @transaction.atomic
-def dispute(user, dn_no):
+def dispute(user, dn_no, version=None):
     require(user, "dn")
     dn = get_dn(dn_no, lock=True)
+    check_version(dn, version)
     if dn.validated or evaluate(dn)["status"] != "mismatch":
         raise CommandError("Only mismatched debit notes can be disputed.")
     ev = _validate(dn, timezone.now(), user, mode="dispute")
@@ -113,9 +116,10 @@ def dispute(user, dn_no):
 
 
 @transaction.atomic
-def link(user, dn_no, ref):
+def link(user, dn_no, ref, version=None):
     require(user, "dn")
     dn = get_dn(dn_no, lock=True)
+    check_version(dn, version)
     p = Promotion.objects.filter(mecl_ref=ref).first()
     if not p or not p.agreement_no:
         raise CommandError("Pick a promotion that has an agreement #.")

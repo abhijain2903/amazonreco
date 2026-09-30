@@ -32,7 +32,8 @@ def can(user, perm):
 
 
 def who_can(perm):
-    return " or ".join(ROLE_TITLES[r] for r in PERMS[perm] if r != "Admin")
+    # Admin can do everything, so it is only named when it is the only role (Settings, Integrations).
+    return " or ".join(ROLE_TITLES[r] for r in PERMS[perm] if r != "Admin") or ROLE_TITLES["Admin"]
 
 
 def caps(user):

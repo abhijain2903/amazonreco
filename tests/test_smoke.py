@@ -9,6 +9,8 @@ PAGES = ["/", "/action/", "/pos/", "/pos/?view=board", "/ship/", "/pay/", "/pay/
          "/claims/?tab=closed", "/uploads/", "/integrations/", "/settings/", "/api/v1/purchase-orders", "/api/v1/action-items",
          "/search/?q=MECL", "/notifications/", "/promos/new/", "/uploads/new/"]
 PAGES += [f"/settings/?tab={t}" for t in ["prices", "rules", "cats", "fcs", "users", "notify", "numbering"]]
+PAGES += [f"/ship/?tab={t}" for t in ["asn", "slot", "transit", "invoice", "submitted"]]
+PAGES += [f"/pos/?tab={t}" for t in ["new", "book", "release", "ship", "done", "all"]]
 PAGES += [f"/uploads/new/?type=U{i}" for i in range(1, 10)] + [f"/uploads/template/U{i}/" for i in range(1, 10)]
 
 
@@ -37,7 +39,8 @@ def test_everything_renders(username, as_user):
     c = as_user(username)
     bad = []
     for url in PAGES + _records():
-        r = c.get(url)
+        # Drawers and dialogs are HTMX partials; without the header a record URL redirects to its list page.
+        r = c.get(url, HTTP_HX_REQUEST="true") if url.startswith("/records/") else c.get(url)
         if r.status_code not in (200, 204, 302):
             bad.append((url, r.status_code))
     assert not bad, bad

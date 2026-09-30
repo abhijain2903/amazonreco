@@ -2,6 +2,7 @@ from django.db.models import Prefetch
 from django.shortcuts import render
 
 from billing.services import invoice_blocked
+from core import htmx
 from orders.models import PoLine, PurchaseOrder
 from orders.services import po_units
 from rules.services import get_cfg
@@ -13,7 +14,7 @@ TABS = [("asn", "ASN to create", ["released"]), ("slot", "Slot to book", ["asn"]
 
 
 def ship_list(request):
-    tab = request.GET.get("tab", "asn")
+    tab = htmx.pick(request, "tab", [k for k, _, _ in TABS], "asn")
     cfg = get_cfg()
     qs = PurchaseOrder.objects.select_related("fc").prefetch_related(Prefetch("lines", queryset=PoLine.objects.select_related("sku")))
     stages = dict((k, s) for k, _, s in TABS)[tab]
@@ -26,7 +27,7 @@ def ship_list(request):
         elif tab in ("slot", "transit"):
             r.update(sh=p.shipment, risk=slot_at_risk(p, cfg), units=sum(l.qty for l in p.shipment.lines.all()))
         elif tab == "invoice":
-            r.update(b=p.sap_billing, blocked=invoice_blocked(p, cfg), net=sum(l.qty * l.cost_h for l in p.lines.all() if l.qty_confirmed))
+            r.update(b=p.sap_billing, blocked=invoice_blocked(p, cfg))
             r["net"] = sum(sl.qty * next(l.cost_h for l in p.lines.all() if l.sku_id == sl.sku_id) for sl in p.shipment.lines.all())
         else:
             r.update(inv=p.invoice)

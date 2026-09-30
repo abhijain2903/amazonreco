@@ -96,7 +96,7 @@ the live connectors. Nothing else changes.
 ## Tests
 
 ```bash
-pytest                                            # 44 tests: rules, flows F1-F7, uploads U1-U9, API
+pytest                                            # 83 tests: rules, flows F1-F7, uploads U1-U9, API, smoke, defect regressions
 python manage.py seed_demo --reset && python manage.py runserver &
 E2E_BASE_URL=http://127.0.0.1:8000 pytest tests/e2e -m e2e -p no:django    # browser tests (Playwright)
 ```

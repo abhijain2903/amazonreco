@@ -44,6 +44,13 @@
   // Deferred so the other HX-Trigger events (openDrawer, toast) still bubble from the element inside the modal.
   document.addEventListener('closeModal', () => setTimeout(closeModal, 0));
   document.addEventListener('openDrawer', e => htmx.ajax('GET', e.detail.url, { target: '#drawer', swap: 'innerHTML' }));
+  // An autosaving form that stays open learns its record's new version (optimistic locking).
+  document.addEventListener('version', e => { const el = document.getElementById(e.detail.id); if (el) el.value = e.detail.v; });
+
+  // Mobile menu button (no inline handlers: the Content-Security-Policy allows only script files).
+  document.addEventListener('click', e => {
+    if (e.target.closest('[data-toggle="menu"]')) $('#app').classList.toggle('side-open');
+  });
 
   document.addEventListener('click', e => {
     const t = e.target.closest('[data-close]');
@@ -129,6 +136,12 @@
     });
   }
   document.addEventListener('DOMContentLoaded', connect);
+
+  // A shared record link lands on its list page with ?open=/records/...: open that drawer.
+  document.addEventListener('DOMContentLoaded', () => {
+    const url = new URLSearchParams(location.search).get('open');
+    if (url && url.startsWith('/records/')) htmx.ajax('GET', url, { target: '#drawer', swap: 'innerHTML' });
+  });
 
   // CSRF for every HTMX request
   document.addEventListener('htmx:configRequest', e => {

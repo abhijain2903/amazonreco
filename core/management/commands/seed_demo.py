@@ -251,6 +251,7 @@ class Command(BaseCommand):
         p2.status = "disputed"; p2.save()
         d = Dispute.objects.create(case_no=f"DSP-{next_number('dispute', 41):04d}", type="price", ref=p2.payment_no, po=p2.po, amount_h=amt2,
                                    status="submitted", due=self.t(6), note="Invoice used the agreed cost. Amazon applied the old cost from the PO.")
+        Dispute.objects.filter(pk=d.pk).update(created_at=self.t(-8))  # created_at is auto_now_add; match the opened event
         audit("dispute", d.case_no, "Dispute opened", name=self.names["Finance"], at=self.t(-8))
         audit("dispute", d.case_no, "Submitted to Amazon via Vendor Central contact form", name=self.names["Finance"], at=self.t(-7))
         audit("po", p2.po.po_no, f"Dispute {d.case_no} opened for SAR {round(amt2 / 100):,}", name=self.names["Finance"], at=self.t(-8))
@@ -261,6 +262,7 @@ class Command(BaseCommand):
         paid = list(PurchaseOrder.objects.filter(stage="paid"))
         d2 = Dispute.objects.create(case_no=f"DSP-{next_number('dispute', 41):04d}", type="shortage", ref=f"RMT-{9102100 + self.ri(1, 90)}",
                                     po=paid[3], amount_h=276000, status="won", due=self.t(-50), note="Proof of delivery showed full cartons received.")
+        Dispute.objects.filter(pk=d2.pk).update(created_at=self.t(-64))
         audit("dispute", d2.case_no, "Dispute opened", name=self.names["PIC"], at=self.t(-64))
         audit("dispute", d2.case_no, "Marked won. SAR 2,760 recovered", name=self.names["Finance"], at=self.t(-51))
 
@@ -301,11 +303,12 @@ class Command(BaseCommand):
         p.save()
         return p
 
-    def mk_dn(self, p, at, over=0, idx=0):
+    def mk_dn(self, p, at, over=0, idx=0, agreement=None):
+        """agreement: the number as Amazon sent it, when it differs from the promotion's (unlinked DN)."""
         from debitnotes.services import create_dn
         lines = [(l.sku, (l.sold_units if l.sold_units is not None else l.expected_units) + (over if i == idx else 0), l.support_h)
                  for i, l in enumerate(p.lines.select_related("sku"))]
-        return create_dn(f"VCDN-{self.ri(10**6, 10**7 - 1)}", p.agreement_no, at, lines, name="Vendor Central import", at=at)
+        return create_dn(f"VCDN-{self.ri(10**6, 10**7 - 1)}", agreement or p.agreement_no, at, lines, name="Vendor Central import", at=at)
 
     def promos(self):
         from claims.services import _make_claim, _record_cn
@@ -348,9 +351,7 @@ class Command(BaseCommand):
         wait = [self.mk_promo(-30, 7, "approved"), self.mk_promo(-24, 6, "approved"), self.mk_promo(-18, 5, "approved"), self.mk_promo(-12, 8, "approved", cat="TV")]
         # unlinked DN: agreement number with two digits swapped
         a = wait[0].agreement_no
-        dn = self.mk_dn(wait[0], self.t(-1, -6))
-        dn.agreement_no = a[:-2] + a[-1] + a[-2] if a[-1] != a[-2] else a[:-1] + "0"
-        dn.save()
+        self.mk_dn(wait[0], self.t(-1, -6), agreement=a[:-2] + a[-1] + a[-2] if a[-1] != a[-2] else a[:-1] + "0")
         self.mk_promo(-6, 10, "approved", occ="National Day deals", cat="DI"); self.mk_promo(-4, 9, "approved", occ="National Day deals", cat="PA")
         self.mk_promo(-3, 7, "approved", occ="Weekend flash deals"); self.mk_promo(-1, 6, "approved", occ="Payday deals", cat="Bundle")
         self.mk_promo(12, 8, "approved", occ="Mega deals week"); self.mk_promo(55, 10, "approved", occ="White Friday", cat="TV")

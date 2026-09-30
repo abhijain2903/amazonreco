@@ -27,6 +27,9 @@ class DnLine(Base):
     units = models.IntegerField()
     rate_h = models.BigIntegerField()
 
+    class Meta:
+        ordering = ["created_at"]  # creation order: stable across databases (ids are random UUIDs)
+
     @property
     def charged_h(self):
         return self.units * self.rate_h

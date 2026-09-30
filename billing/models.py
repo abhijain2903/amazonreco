@@ -17,6 +17,9 @@ class SapBillingLine(Base):
     qty = models.IntegerField()
     price_h = models.BigIntegerField()
 
+    class Meta:
+        ordering = ["created_at"]  # creation order: stable across databases (ids are random UUIDs)
+
 
 class Invoice(Base):
     """Invoice sent to Amazon. SAP stays the legal tax invoice of record (ZATCA)."""
@@ -39,3 +42,6 @@ class InvoiceLine(Base):
     qty = models.IntegerField()
     price_h = models.BigIntegerField()
     net_h = models.BigIntegerField()
+
+    class Meta:
+        ordering = ["created_at"]  # creation order: stable across databases (ids are random UUIDs)

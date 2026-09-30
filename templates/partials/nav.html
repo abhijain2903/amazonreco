@@ -5,5 +5,5 @@
 </nav>{% endfor %}
 <div class="side-foot">
   {% if demo %}<div class="proto"><i></i><span>Demo mode: SAP and Amazon steps are simulated so every flow can be clicked through.</span></div>{% endif %}
-  <a class="btn sm ghost" href="/admin/" hx-boost="false">{% icon 'sliders' %}<span>Admin console</span></a>
+  {% if admin_console %}<a class="btn sm ghost" href="/admin/" hx-boost="false">{% icon 'sliders' %}<span>Admin console</span></a>{% endif %}
 </div>

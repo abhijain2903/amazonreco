@@ -17,7 +17,7 @@ TONE = {"to_validate": ("Matches", "ok"), "mismatch": ("Mismatch", "bad"), "unli
 
 
 def dn_list(request):
-    tab = request.GET.get("tab", "todo")
+    tab = htmx.pick(request, "tab", [k for k, _, _ in TABS], "todo")
     cfg = get_cfg()
     tol = cfg.tol_h()
     E = [(d, svc.evaluate(d, cfg)) for d in DebitNote.objects.prefetch_related("lines__sku")]
@@ -59,26 +59,26 @@ def drawer(request, key):
 
 @require_POST
 def approve(request, dn_no):
-    svc.approve(request.user, dn_no)
+    svc.approve(request.user, dn_no, request.POST.get("version"))
     return htmx.done(request, f"DN {dn_no} approved")
 
 
 def override(request, dn_no):
     dn = svc.get_dn(dn_no)
     if request.method == "POST":
-        svc.approve_override(request.user, dn_no, request.POST.get("reason", ""))
+        svc.approve_override(request.user, dn_no, request.POST.get("reason", ""), request.POST.get("version"))
         return htmx.done(request, f"DN {dn_no} approved with override", close_modal=True)
     return render(request, "dialogs/override.html", dict(dn=dn, ev=svc.evaluate(dn)))
 
 
 @require_POST
 def dispute(request, dn_no):
-    d = svc.dispute(request.user, dn_no)
+    d = svc.dispute(request.user, dn_no, request.POST.get("version"))
     return htmx.done(request, f"Expected amount approved. Dispute {d.case_no} opened for {d.amount_h / 100:,.0f} SAR", "info")
 
 
 @require_POST
 def link(request, dn_no):
-    p = svc.link(request.user, dn_no, request.POST.get("ref", ""))
+    p = svc.link(request.user, dn_no, request.POST.get("ref", ""), request.POST.get("version"))
     svc.notify_status(svc.get_dn(dn_no))
     return htmx.done(request, f"DN {dn_no} linked to {p.mecl_ref}", open_drawer=f"/records/promo/{p.mecl_ref}/?tab=dn", drawer=False)

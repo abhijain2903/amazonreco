@@ -18,7 +18,7 @@
   <aside class="side" id="side" aria-label="Main navigation">{% include "partials/nav.html" %}</aside>
   <div class="main">
     <header class="top">
-      <button type="button" class="icon-btn menu-btn" aria-label="Open menu" onclick="document.getElementById('app').classList.toggle('side-open')">{% icon 'menu' %}</button>
+      <button type="button" class="icon-btn menu-btn" aria-label="Open menu" data-toggle="menu">{% icon 'menu' %}</button>
       <div class="crumb">ME Vendor Hub / <b>{% page_title %}</b></div>
       <button type="button" class="search" hx-get="/search/" hx-target="#pal" hx-swap="innerHTML" aria-label="Search records">{% icon 'search' %}<span>Search PO, ASN, invoice, agreement, DN, model…</span><kbd>Ctrl K</kbd></button>
       {% if caps.upload %}<button type="button" class="btn pri up-btn" hx-get="/uploads/new/" hx-target="#modal" hx-swap="innerHTML">{% icon 'upload' %}<span>Upload</span></button>{% endif %}

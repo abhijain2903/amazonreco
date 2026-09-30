@@ -17,7 +17,7 @@ TABS = [("short", "Short-paid"), ("match", "To match"), ("matched", "Matched"), 
 
 
 def pay_list(request):
-    tab = request.GET.get("tab", "short")
+    tab = htmx.pick(request, "tab", [k for k, _ in TABS], "short")
     now = timezone.now()
     P = Payment.objects.select_related("invoice", "po")
     short = list(P.filter(status="short"))
