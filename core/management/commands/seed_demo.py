@@ -70,6 +70,7 @@ class Command(BaseCommand):
             self.backorder_demo()
             self.returns_demo()
             self.vendor_codes()
+            self.documents()
         self.stdout.write(self.style.SUCCESS("Example data loaded."))
 
     def backorder_demo(self):
@@ -129,6 +130,30 @@ class Command(BaseCommand):
         if not inv.payments.exists():
             import_payment(f"RMT-{next_number('payment', 9102200)}", self.t(-2), inv.invoice_no, inv.total_h - c.amount_h,
                            c.amount_h, f"Vendor returns - {c.rtv_no}", at=self.t(-2))
+
+    def documents(self):
+        """The files each seeded PO would have produced (acknowledgement, ASN, carton labels, invoice), so the Documents
+        tab is not empty in the demo."""
+        from core.services import save_file
+        from orders.models import PurchaseOrder
+        status = {"accept": "Accepted", "partial": "Partially accepted", "backorder": "Backordered", "reject": "Rejected"}
+        for po in PurchaseOrder.objects.exclude(stage="new").prefetch_related("lines__sku").order_by("order_date"):
+            lines = list(po.lines.all())
+            save_file("po_ack", f"PO_ack_{po.po_no}.csv", [["po_no", "asin", "model_no", "qty_ordered", "qty_confirmed", "qty_backordered", "status"]]
+                      + [[po.po_no, l.asin, l.sku.model_no, l.qty_ordered, l.qty_confirmed, l.qty_backorder, status[l.decision]] for l in lines], "po", po.po_no)
+            for sh in po.shipments.order_by("seq"):
+                day = timezone.localtime(sh.ship_date).date().isoformat()
+                save_file("asn", f"ASN_{sh.asn_no}.csv", [["asn_no", "po_no", "ship_to", "ship_date", "cartons", "asin", "qty"]]
+                          + [[sh.asn_no, po.po_no, po.fc.code, day, sh.cartons, l.sku.asin, l.qty] for l in sh.lines.select_related("sku")], "po", po.po_no)
+                save_file("labels", f"Carton_labels_{sh.asn_no}.csv", [["carton", "of", "sscc", "asn_no", "po_no", "ship_to", "asin", "model_no", "qty"]]
+                          + [[c.seq, sh.cartons, c.sscc, sh.asn_no, po.po_no, po.fc.code, c.sku.asin, c.sku.model_no, c.qty]
+                             for c in sh.carton_list.select_related("sku")], "po", po.po_no)
+            for inv in po.invoices.order_by("seq"):
+                save_file("invoice", f"Invoice_{inv.invoice_no}.csv", [["invoice_no", "po_no", "invoice_date", "asin", "qty", "unit_price_sar", "net_sar"]]
+                          + [[inv.invoice_no, po.po_no, timezone.localtime(inv.invoice_date).date().isoformat(), l.sku.asin, l.qty,
+                              f"{l.price_h / 100:.2f}", f"{l.net_h / 100:.2f}"] for l in inv.lines.select_related("sku")]
+                          + [["", "", "", "", "", "VAT 15%", f"{inv.vat_h / 100:.2f}"], ["", "", "", "", "", "Total", f"{inv.total_h / 100:.2f}"]],
+                          "po", po.po_no)
 
     def vendor_codes(self):
         """Two Amazon vendor codes: audio (personal and home audio) and vision (TV, digital imaging, bundles)."""

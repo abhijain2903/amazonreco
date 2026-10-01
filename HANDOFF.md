@@ -1,6 +1,6 @@
 # ME Vendor Hub — Handoff
 
-**As of:** 28 Sep 2026 · **Repo:** https://github.com/abhijain2903/amazonreco (branch `main`)
+**As of:** 1 Oct 2026 (build `a2a48b3`) · **Repo:** https://github.com/abhijain2903/amazonreco (branch `main`)
 **Client:** Modern Electronics (ME), KSA — Amazon Vendor Central digitalisation · **Built by:** Iksula
 
 Read this first when picking the project up in Claude Code. `CLAUDE.md` has the day-to-day commands and coding conventions;
@@ -23,6 +23,7 @@ Salesforce. The requirement (ME's pptx) had two 10-step processes sharing one da
 | F5 Promotions | Product team request → submit to Amazon → agreement # (unique) → promo runs | R8 unique agreement |
 | F6 Debit notes | DN due end + 30 days; validated vs sold units × agreed support | R9 DN late, R10 DN match |
 | F7 Claims | Claim to product team → credit note reconciled; shortfall chased or written off | R11 CN = claim |
+| Returns (RTV) | Amazon return request → authorise / refuse → goods received (count, condition) → deduction matched; overcharge disputed | — |
 
 R12 = global tolerance (SAR 1). BRD worked example used in seed and tests: 180 units sold × SAR 50 support, DN charges 192 units → +SAR 600.
 
@@ -33,6 +34,9 @@ R12 = global tolerance (SAR 1). BRD worked example used in seed and tests: 180 u
 - Technical Design & Build Plan (updated to Django + HTMX): https://claude.ai/artifact/9pWH7kyMgW6ToXvsywgZRe
 - Clickable prototype (single HTML, not the build): https://claude.ai/artifact/LN1BL6rHdxHKo3eTkaM8dz
 - Build screenshots, 24 screens from the running app: https://claude.ai/artifact/5VZrPxUEAcCYqXqDd1LTsM
+- Process gap map (every real-world step vs the hub; status after phases A–C): https://claude.ai/artifact/SbJz7LphBEXfK43Q6my9Hd
+- Client objections & answers (demo prep, incl. what Amazon's APIs allow): https://claude.ai/artifact/UCq5t5qZwSuL8whQ5miGTC
+- Glossary of every term, stage and code in the hub: https://claude.ai/artifact/81X8D9Nhswqgr7vh8oHUfQ
 
 ## 3. Decisions already taken (don't reopen without a reason)
 
@@ -41,7 +45,7 @@ R12 = global tolerance (SAR 1). BRD worked example used in seed and tests: 180 u
   Earlier options (Next.js/Prisma, Drizzle) were dropped.
 - Modular monolith: one Django app per business area; services layer shared by screens and the JSON API.
 - Money in integer halalas; Asia/Riyadh; append-only audit trail enforced by a DB trigger; optimistic locking via `version`.
-- File mode first: every source works by upload (U1-U9) and generated files; live connectors are adapter stubs.
+- File mode first: every source works by upload (U1-U10) and generated files; live connectors are adapter stubs.
 - Demo mode (`HUB_DEMO_SIMULATIONS=true`) simulates SAP order/delivery/billing and Amazon sold units so every flow clicks through.
 - Delivery via GitHub repo `abhijain2903/amazonreco` (the Claude GitHub app now has push access).
 
@@ -59,7 +63,21 @@ R12 = global tolerance (SAR 1). BRD worked example used in seed and tests: 180 u
   secrets never stored in DB).
 - JSON API (`/api/v1/…`, OpenAPI at `/api/v1/docs`), session or Bearer `HUB_API_TOKEN`.
 - Entra ID sign-in wired (roles from groups via `OIDC_GROUP_ROLE_MAP`); dev user-picker login with optional access code.
-- Tests: `pytest` → 47 passed (rules, flows, uploads for all 9 types, API, smoke of every page/drawer/dialog for admin + PIC).
+- AI-assisted matching (`matching/`): payment→invoice, deduction→debit note, debit note→promotion and deduction
+  classification with scores and reasons; "Ask AI" per record; provider Anthropic / OpenAI / Bedrock, key entered in
+  Settings → Matching (Fernet-encrypted, write-only) or from the server env. Nothing is applied without a person.
+- Access audit: every command checked against the permission matrix (`tests/test_access.py`).
+- Gap-map fixes, phases A–C (1 Oct 2026), everything except Arabic and live connectors:
+  - A: short-paid footer, Documents tab, Excel export everywhere, Saudi working calendar (Fri–Sat, holidays in Settings),
+    price valid on the PO date, case packs, single SKU/price edit, credit hold, POD prompt, dispute case ID + partial win,
+    promotion types, several credit notes per claim, go-live guide on Uploads.
+  - B: stock reserved across POs, Amazon PO changes/cancellations, SSCC carton labels, slot reschedule / missed / refused,
+    collect freight, invoice rejected/on hold + resubmit, credit memos, chargeback/returns/co-op deduction types,
+    recoveries in later remittances, ageing report, fixed fees, several DNs per agreement (instalments), amendments,
+    budgets, batch claims, per-person alerts, assignment + @mentions, Reports page, vendor codes.
+  - C: backorders and split shipments (several deliveries/ASNs/slots/invoices per PO, stage "Backorder open"),
+    returns (RTV) app with U10 upload.
+- Tests: `pytest` → 244 passed (rules, flows, uploads U1-U10, API, access matrix, matching, defects, phases A–C, smoke).
   Playwright e2e: 6 passed against a running seeded server.
 - Packaging: Dockerfile (`bin/start.sh`: migrate → optional seed → optional worker → gunicorn/uvicorn on `$PORT`),
   `docker-compose.yml` (db, migrate, web, worker), `render.yaml` one-click demo, `.env.example`.
@@ -70,37 +88,35 @@ R12 = global tolerance (SAR 1). BRD worked example used in seed and tests: 180 u
 - Render deploy (blueprint written and the start sequence simulated on an empty DB; not deployed).
 - `/api/v1/docs` loads Swagger UI from a CDN — blank without internet.
 
-## 5. Hosting — where it stands
+## 5. Hosting — live
 
-No live URL yet. Two routes:
+Live since 28 Sep 2026 at **https://amazonhub.iksulalive.com** on AWS EC2 `i-00c8ba9d4b11f9a59` (account `231811141843`,
+`ap-south-1`, Ubuntu 24.04), sharing the box with a separate app (Supplier Portal, `/opt/spp`) that must not be touched.
 
-1. **Render (fastest demo)**: https://render.com/deploy?repo=https://github.com/abhijain2903/amazonreco → set `HUB_DEMO_PASSWORD`
-   → ~10 min. Free-plan limits: sleeps after 15 min idle, files lost on restart, free DB expires after 30 days.
-2. **AWS EC2 via SSM (user's preferred)**: account `231811141843`, region `ap-south-1`, instance `i-00c8ba9d4b11f9a59`.
-   The user's instructions for this server:
-   - Connect with **SSM Session Manager only — no SSH**. Touch **no other EC2 instance or AWS resource**.
-   - **First only verify** (credentials valid, account ID matches, region, instance online in SSM, session can be opened),
-     make **no changes**, reply exactly "SSM connection established successfully." and **wait**; the user gives commands one at a time.
-   - The earlier cloud session could not do this (placeholder AWS keys, AWS endpoints blocked). From Claude Code on the user's
-     machine, check `aws sts get-caller-identity`, `aws ssm describe-instance-information --filters Key=InstanceIds,Values=i-00c8ba9d4b11f9a59 --region ap-south-1`,
-     and that `session-manager-plugin` is installed before opening a session.
-   - Likely deploy once allowed (only when the user asks): install Docker + compose plugin → clone repo → `.env` from `.env.example`
-     (`DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS`, `HUB_DEV_LOGIN=true`, `HUB_DEMO_PASSWORD`, `HUB_DEMO_SIMULATIONS=true`,
-     `HUB_SEED_DEMO=true`) → `docker compose up -d --build`. With no TLS/domain, set `DJANGO_DEBUG=true` or `DJANGO_SSL_REDIRECT=false`
-     and note secure cookies need HTTPS (put CloudFront or an ALB with a certificate in front, or use a domain + Caddy).
-     Security group must allow the web port; for CloudFront forward `CloudFront-Forwarded-Proto`/Host.
+- Native layout, no Docker: code `/opt/mehub/app` (branch `main`), venv `/opt/mehub/venv`, system user `mehub`, own Postgres
+  db/role `mehub`, settings `/etc/mehub/mehub.env` (root-only), helper `sudo mehub-manage <cmd>`, systemd `mehub-web`
+  (gunicorn/uvicorn on 127.0.0.1:8010) and `mehub-worker`, nginx vhost with a Let's Encrypt certificate. Only ports 80/443.
+- Access is **SSM Session Manager only**; the user's IAM user can open interactive sessions only, so server steps are given as
+  single commands for the user to paste. Deploy = merge to `main`, then:
+  `sudo -u mehub git -C /opt/mehub/app pull -q && sudo mehub-manage migrate --noinput && sudo mehub-manage collectstatic --noinput && sudo systemctl restart mehub-web mehub-worker`
+  (add `pip install -r requirements.txt` when requirements change).
+- Demo settings on the server: demo simulations on, dev login with access code, `HUB_DJANGO_ADMIN=false`. The live AI
+  provider is OpenAI, connected in Settings → Matching.
+- `seed_demo --reset` wipes the live demo data — only on request.
 
 ## 6. Open items (suggested order)
 
-1. Get a live URL (section 5) and walk ME through it; collect feedback.
-2. UAT data: load ME's real SKU master (U1) and agreed price list (U2); replace example FC codes with real Amazon.sa ship-to codes.
-3. Confirm with ME IT which live integrations come first and build them behind the existing adapters
-   (`integrations/connectors.py`): Amazon SP-API for vendors or EDI 850/855/856/810/820; SAP OData (S/4) or IDoc/BAPI (ECC);
-   Salesforce order log; SMTP/Microsoft 365 email (daily digest currently only logs).
-4. Make "Settings → Notifications" and "Numbering" editable (today display-only); per-user notification preferences.
-5. Production hardening: CI (GitHub Actions running pytest against Postgres), Docker build in CI, S3/Azure Blob for media
-   (`STORAGES`), backups, Sentry/logging, rate limits on the API, vendor Swagger UI assets locally.
-6. Arabic/RTL is not in scope yet — confirm with ME.
+1. Settings only ME can give: GS1 company prefix (`HUB_GS1_PREFIX`, SSCC labels), payment terms (`HUB_PAYMENT_TERMS_DAYS`,
+   default 60), real Amazon.sa FC codes and vendor codes, this year's Eid holidays (Settings → Calendar), freight terms
+   (prepaid / collect), budgets per category or per brand.
+2. UAT data: ME's real SKU master (U1) and price list (U2), then the go-live guide on Uploads.
+3. Live integrations behind the existing adapters (`integrations/connectors.py`): Amazon SP-API for vendors (orders,
+   shipments, invoices + Invoices API status, Finance Remittance API, returns, vendor sales report) or EDI; SAP OData (S/4)
+   or IDoc/BAPI (ECC); Salesforce order log; Microsoft 365 / SMTP email for alerts.
+4. Small follow-ups: one-click "Add to SKU master" from a rejected PO row; partial credit release if ME uses it.
+5. Production hardening: CI (GitHub Actions running pytest against Postgres), S3 for media (`STORAGES`), backups,
+   Sentry/logging, API rate limits, vendor Swagger UI assets locally, Entra ID sign-in against ME's tenant.
+6. Arabic/RTL is not in scope — confirm with ME.
 
 ## 7. Gotchas learned during the build
 
@@ -111,23 +127,33 @@ No live URL yet. Two routes:
 - SSE `/events/` is async under ASGI (production) and a sync generator under runserver; don't make it async-only.
 - WhiteNoise under ASGI emits a "must consume synchronous iterators" warning — silenced in settings, harmless.
 - `seed_demo` is deterministic (seed 20260926) and relative to "now"; e2e tests change data, so re-seed before each e2e run.
+  New seed steps go at the end of `handle()` so earlier random draws don't shift.
 - Seed and uploads use `next_number()` counters; suggested CN numbers only advance the counter when the suggestion is used.
-- Upload type U9 is **credit notes**, not a sales report; sold units come from demo simulation or the DN upload sample.
+- Upload type U9 is **credit notes**, not a sales report; U10 is returns. Sold units come from demo simulation or the DN upload sample.
 - The audit trigger makes any UPDATE of `core_auditevent` fail — compute timestamps before writing events (seed bug fixed this way).
+- Several shipments per PO: `PurchaseOrder.shipment / invoice / sap_delivery / sap_billing` are properties returning the
+  latest one (`seq`); `fulfilment.services.delivery_of` returns None while a released PO waits for its next delivery.
+  Mark POs paid only through `payments.services.settle_po` (all shipped, every invoice settled).
+- Alerts: use `core.services.notify(...)` — it routes by link type/tab to roles (`ALERT_ROLES`) and copies the record's owner.
+- The repo sits in an iCloud-synced folder: `git stash` and `sed -i` have produced duplicate or empty files. Edit with
+  normal tools; keep a working copy elsewhere if iCloud misbehaves.
 
 ## 8. Where things are
 
 ```
 config/        settings (env-driven), urls, asgi/wsgi, api.py (Django Ninja)
-core/          Base model, audit, notes, notifications, files, counters, Action Center, dashboard, search, SSE,
+core/          Base model, audit, notes, notifications/alerts, assignments, vendor codes, attachments, holidays, files,
+               counters, Action Center (actions.py), reports.py, exports.py, workcal.py, dashboard, search, SSE,
                htmx helpers, middleware, tasks (Procrastinate), templatetags/hub.py, seed_demo command
-identity/      User (roles ArrayField), permissions matrix, Entra backend
+identity/      User (roles ArrayField, alert_scope), permissions matrix, Entra backend
 rules/         engine.py (R1-R12 pure functions), RuleConfig + services
-catalog/ orders/ fulfilment/ billing/ payments/ promotions/ debitnotes/ claims/   business apps (models, services, views, urls)
-uploads/       types.py (U1-U9), services.py (parse → map → preview → commit), views
+catalog/ orders/ fulfilment/ billing/ payments/ promotions/ debitnotes/ claims/ returns/   business apps
+matching/      suggestion features, matchers, AI providers, encrypted key, settings
+uploads/       types.py (U1-U10), services.py (parse → map → preview → commit), views
 integrations/  connectors.py (adapters), models (Connector, SyncRun), views
 templates/     pages/ records/ dialogs/ partials/ registration/
 static/        css/hub.css, js/hub.js, js/htmx.min.js, js/alpine.min.js
-tests/         conftest (seeds once per session), test_rules, test_flows, test_uploads, test_api, test_smoke, e2e/test_ui
+tests/         conftest (seeds once per session), test_rules, test_flows, test_uploads, test_api, test_access, test_matching,
+               test_defects, test_phase_a/b/c, test_smoke, e2e/test_ui
 bin/start.sh   container entrypoint · Dockerfile · docker-compose.yml · render.yaml · .env.example
 ```

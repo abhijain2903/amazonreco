@@ -15,14 +15,14 @@ python manage.py migrate
 python manage.py seed_demo --reset           # deterministic example data; users faisal/noura/omar/khalid/reem/priya/tariq/admin, password "demo"
 python manage.py runserver                   # http://127.0.0.1:8000 (dev user-picker login)
 python manage.py procrastinate worker        # background + periodic jobs
-pytest                                       # 83 tests: rules, flows F1-F7, uploads U1-U9, API, smoke (every page + drawer), defect regressions — needs Postgres
+pytest                                       # 244 tests: rules, flows F1-F7, uploads U1-U10, API, access matrix, matching, phases A-C, smoke — needs Postgres
 E2E_BASE_URL=http://127.0.0.1:8000 pytest tests/e2e -m e2e -p no:django   # Playwright; re-seed first
 ```
 DB settings come from `POSTGRES_*` env vars (default db `mehub`, host `localhost`). `DJANGO_DEBUG` defaults to true.
 
 ## Layout and conventions
 - One Django app per business area: `orders` (F1-F2), `fulfilment` (F3), `billing` (F4), `payments`, `promotions` (F5),
-  `debitnotes` (F6), `claims` (F7), plus `catalog`, `rules`, `uploads`, `integrations`, `identity`, `core`.
+  `debitnotes` (F6), `claims` (F7), `returns` (RTV), plus `catalog`, `rules`, `uploads`, `integrations`, `matching`, `identity`, `core`.
 - **Commands live in `services.py`**: `require(user, perm)` → state/rule checks → change → `audit(...)`, inside
   `@transaction.atomic`, using `select_for_update()` and `check_version()` (optimistic locking via `Base.version`).
   Business errors raise `core.services.CommandError`; `CommandErrorMiddleware` turns them into a red toast (HTMX) or flash.
@@ -32,12 +32,16 @@ DB settings come from `POSTGRES_*` env vars (default db `mehub`, host `localhost
 - **Money is integer halalas** (`*_h` fields, SAR × 100). Format with template filters `sar`, `n`, `n2`, `signed`. Time zone Asia/Riyadh.
 - **Audit trail is append-only** (Postgres trigger, migration `core/0003`). Never update/delete `AuditEvent`; timelines read from it.
 - Promotion stages `live / waiting_dn / dn_overdue / dn_received` are **derived** (`promotions.services.stage_of`), not stored.
-- Action Center is a query (`core/actions.py`), not a table.
+- Action Center is a query (`core/actions.py`), not a table. Due dates use the Saudi working calendar (`core/workcal.py`).
+- A PO can have several deliveries / shipments / invoices (`seq`); `po.shipment`, `po.invoice` etc. are the latest one.
+  Set a PO to paid only via `payments.services.settle_po`.
+- Alerts go through `core.services.notify(...)` (routed to roles / people); lists offer Excel export via `core/exports.py`
+  (`partials/export_btn.html` + a `wants_export(request)` branch in the view).
 - Permissions: `identity/permissions.py` (`PERMS`, `can`, `caps`); in templates use `{% perm 'confirm' %}` on buttons.
 - Templates: `pages/` (full pages extending `base.html`, content inside `#view`), `records/` (drawers extending `records/_drawer.html`),
   `dialogs/` (extending `dialogs/_modal.html`), `partials/`. Custom tags/filters in `core/templatetags/hub.py` (builtins, no `{% load %}` needed).
 - Client JS is only `static/js/hub.js` (toasts, drawer/modal events, palette, SSE, drag-drop). Keep new UI server-rendered.
-- Upload types U1-U9: columns, synonyms, validation, import and sample files all in `uploads/types.py`.
+- Upload types U1-U10: columns, synonyms, validation, import and sample files all in `uploads/types.py`.
 - External systems only through adapters in `integrations/connectors.py`; live methods raise `NotImplementedError` until built.
 - Demo switches: `HUB_DEMO_SIMULATIONS` (simulate SAP/Amazon steps), `HUB_DEV_LOGIN` (user picker), `HUB_DEMO_PASSWORD` (access code),
   `HUB_DJANGO_ADMIN` (false on client-facing hosts: no `/admin/`, no Admin console link).
