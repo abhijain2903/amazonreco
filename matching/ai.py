@@ -1,6 +1,7 @@
-"""Claude for the parts of matching that rules cannot do well: reading Amazon's free-text deduction reasons and
-choosing between close candidates. Every call is optional: with no provider, a refusal, a timeout or an API error
-the function returns None and the rules-based suggestion stands.
+"""AI for the parts of matching that rules cannot do well: reading Amazon's free-text deduction reasons and
+choosing between close candidates. Providers: Claude via the Anthropic API or Amazon Bedrock, or an OpenAI model.
+Every call is optional: with no provider, a refusal, a timeout or an API error the function returns None and the
+rules-based suggestion stands.
 
 Only the fields needed for the decision are sent (references, amounts, dates, reason text) — no people or contacts.
 """
@@ -45,32 +46,42 @@ DEDUCTION_SCHEMA = {
     "additionalProperties": False,
 }
 
+PROVIDERS = ("anthropic", "openai", "bedrock")
+LABELS = {"anthropic": "Claude (Anthropic API)", "openai": "OpenAI", "bedrock": "Claude on Amazon Bedrock", "off": "Not connected"}
+DEFAULT_MODELS = {"anthropic": "claude-opus-5", "bedrock": "anthropic.claude-opus-5"}   # OpenAI: the admin names the model
+ENV_KEYS = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
+
 _client = None
 _client_for = None
 
 
 def connection():
-    """Which Claude connection is in effect. The server's HUB_AI_PROVIDER wins; otherwise what an admin set in
-    Settings → Matching. Returns provider, source, model, region, the key (Anthropic API only) and whether it's usable."""
+    """Which AI connection is in effect. The server's HUB_AI_PROVIDER wins; otherwise what an admin set in
+    Settings → Matching. Returns provider, source, model, region, the key (never for Bedrock) and whether it's usable."""
     import os
 
     from .secrets import decrypt
     cfg = MatchSettings.get()
-    if settings.AI_PROVIDER in ("anthropic", "bedrock"):
+    if settings.AI_PROVIDER in PROVIDERS:
         provider, source = settings.AI_PROVIDER, "server"
-        key = os.environ.get("ANTHROPIC_API_KEY") if provider == "anthropic" else None
+        key = os.environ.get(ENV_KEYS[provider]) if provider in ENV_KEYS else None
+        model = os.environ.get("HUB_AI_MODEL") or DEFAULT_MODELS.get(provider, "")
     else:
         provider, source = cfg.ai_provider, "settings"
-        key = decrypt(cfg.api_key_enc) if provider == "anthropic" else None
-    model = os.environ.get("HUB_AI_MODEL") or ("anthropic.claude-opus-5" if provider == "bedrock" else "claude-opus-5")
+        # A saved key is only ever sent to the provider it was entered for.
+        key = decrypt(cfg.api_key_enc) if provider in ENV_KEYS and cfg.api_key_for == provider else None
+        model = cfg.ai_model or DEFAULT_MODELS.get(provider, "")
     problem = ""
-    if provider == "off":
+    if provider not in PROVIDERS:
         problem = "not connected"
-    elif provider == "anthropic" and not key:
+    elif provider in ENV_KEYS and not key:
         problem = ("the saved API key can no longer be read (the server key changed); enter it again"
-                   if source == "settings" and cfg.api_key_enc else "no API key")
-    return dict(provider=provider, source=source, model=model, region=settings.AI_REGION, key=key,
-                hint=cfg.api_key_hint if source == "settings" else "", ready=not problem, problem=problem)
+                   if source == "settings" and cfg.api_key_enc and cfg.api_key_for == provider else "missing its API key")
+    elif not model:
+        problem = "missing a model name"
+    return dict(provider=provider, label=LABELS.get(provider, provider), source=source, model=model, region=settings.AI_REGION,
+                key=key, hint=cfg.api_key_hint if source == "settings" and cfg.api_key_for == provider else "",
+                ready=not problem, problem=problem)
 
 
 def available():
@@ -82,75 +93,110 @@ def model_name():
 
 
 def _get_client(conn=None):
-    """One client per connection; a new key or provider builds a new client."""
+    """One client per connection; a new key, model host or provider builds a new client."""
     global _client, _client_for
     conn = conn or connection()
     ident = (conn["provider"], conn["region"], conn["key"])
     if _client is None or _client_for != ident:
-        import anthropic
-        if conn["provider"] == "bedrock":
-            _client = anthropic.AnthropicBedrockMantle(aws_region=conn["region"], timeout=60.0, max_retries=2)
+        if conn["provider"] == "openai":
+            import openai
+            _client = openai.OpenAI(api_key=conn["key"], timeout=60.0, max_retries=2)
         else:
-            _client = anthropic.Anthropic(api_key=conn["key"], timeout=60.0, max_retries=2)
+            import anthropic
+            if conn["provider"] == "bedrock":
+                _client = anthropic.AnthropicBedrockMantle(aws_region=conn["region"], timeout=60.0, max_retries=2)
+            else:
+                _client = anthropic.Anthropic(api_key=conn["key"], timeout=60.0, max_retries=2)
         _client_for = ident
     return _client
 
 
+def _sdk_errors():
+    """The SDK exception classes, both SDKs (they share the same names)."""
+    import anthropic
+    mods = [anthropic]
+    try:
+        import openai
+        mods.append(openai)
+    except ImportError:
+        pass
+    pick = lambda name: tuple(getattr(m, name) for m in mods)
+    return {n: pick(n) for n in ("AuthenticationError", "PermissionDeniedError", "NotFoundError", "RateLimitError",
+                                 "APIConnectionError", "APIStatusError")}
+
+
+def _complete(conn, system, user, schema=None, small=False):
+    """One request to whichever provider is connected. Returns (text, model, stopped_cleanly)."""
+    client = _get_client(conn)
+    if small:
+        client = client.with_options(max_retries=0, timeout=30.0)
+    if conn["provider"] == "openai":
+        kw = dict(model=conn["model"], messages=([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": user}])
+        if schema:
+            kw["response_format"] = {"type": "json_schema", "json_schema": {"name": "answer", "schema": schema, "strict": True}}
+        resp = client.chat.completions.create(**kw)
+        ch = resp.choices[0]
+        return ch.message.content or "", resp.model, ch.finish_reason == "stop" and not ch.message.refusal
+    kw = dict(model=conn["model"], max_tokens=16 if small else 4000, messages=[{"role": "user", "content": user}])
+    if system:
+        kw["system"] = system
+    if schema:
+        kw["output_config"] = {"effort": "low", "format": {"type": "json_schema", "schema": schema}}
+    if conn["provider"] == "anthropic" and not small:
+        # Server-side fallback: if the model declines, the API retries on another model in the same call.
+        resp = client.beta.messages.create(**kw, betas=["server-side-fallback-2026-07-01"], fallbacks="default")
+    else:
+        resp = client.messages.create(**kw)
+    text = next((b.text for b in resp.content if b.type == "text"), "")
+    return text, resp.model, resp.stop_reason == "end_turn" or (small and resp.stop_reason == "max_tokens")
+
+
 def test_connection():
     """One tiny call to prove the connection works. Returns (ok, message for the admin)."""
-    import anthropic
     conn = connection()
     if not conn["ready"]:
-        return False, f"Claude is {conn['problem']}."
+        return False, f"{conn['label']} is {conn['problem']}."
+    E = _sdk_errors()
+    console = "the OpenAI dashboard" if conn["provider"] == "openai" else "the Claude Console" if conn["provider"] == "anthropic" else "Amazon Bedrock"
     try:
-        resp = _get_client(conn).with_options(max_retries=0, timeout=30.0).messages.create(
-            model=conn["model"], max_tokens=16, messages=[{"role": "user", "content": "Reply with the single word OK."}])
-    except anthropic.AuthenticationError:
-        return False, "The API key was rejected. Check it in the Claude Console and enter it again."
-    except anthropic.PermissionDeniedError:
-        return False, "This key or account is not allowed to use the model. Check access in the Claude Console or Bedrock."
-    except anthropic.NotFoundError:
-        return False, f"Model {conn['model']} is not available on this account or region."
-    except anthropic.RateLimitError:
-        return False, "Rate limited or out of credit. Check billing in the Claude Console."
-    except anthropic.APIConnectionError:
-        return False, "Could not reach Claude from the server. Check the server's internet access."
-    except anthropic.APIStatusError as e:
-        return False, f"Claude returned an error ({e.status_code}): {e.message}"
-    return True, f"Connected to Claude ({resp.model}) via {'Amazon Bedrock' if conn['provider'] == 'bedrock' else 'the Anthropic API'}."
+        _, model, _ = _complete(conn, "", "Reply with the single word OK.", small=True)
+    except E["AuthenticationError"]:
+        return False, f"The API key was rejected. Check it in {console} and enter it again."
+    except E["PermissionDeniedError"]:
+        return False, f"This key or account is not allowed to use {conn['model']}. Check access in {console}."
+    except E["NotFoundError"]:
+        return False, f"Model {conn['model']} is not available on this account or region. Check the model name."
+    except E["RateLimitError"]:
+        return False, f"Rate limited or out of credit. Check billing in {console}."
+    except E["APIConnectionError"]:
+        return False, "Could not reach the AI provider from the server. Check the server's internet access."
+    except E["APIStatusError"] as e:
+        return False, f"The AI provider returned an error ({e.status_code}): {e.message}"
+    return True, f"Connected to {conn['label']} ({model})."
 
 
 def _ask(task, payload, schema):
     """One structured call. Returns (dict, model) or (None, "")."""
     if not available():
         return None, ""
-    import anthropic
     conn = connection()
-    kwargs = dict(model=conn["model"], max_tokens=4000, system=SYSTEM,
-                  messages=[{"role": "user", "content": f"{task}\n\n{json.dumps(payload, sort_keys=True, default=str)}"}],
-                  output_config={"effort": "low", "format": {"type": "json_schema", "schema": schema}})
+    E = _sdk_errors()
     try:
-        client = _get_client(conn)
-        if conn["provider"] == "anthropic":
-            # Server-side fallback: if the model declines, the API retries on another model in the same call.
-            resp = client.beta.messages.create(**kwargs, betas=["server-side-fallback-2026-07-01"], fallbacks="default")
-        else:
-            resp = client.messages.create(**kwargs)
-    except anthropic.APIConnectionError as e:
+        text, model, clean = _complete(conn, SYSTEM, f"{task}\n\n{json.dumps(payload, sort_keys=True, default=str)}", schema)
+    except E["APIConnectionError"] as e:
         log.warning("AI call failed (connection): %s", e)
         return None, ""
-    except anthropic.RateLimitError as e:
+    except E["RateLimitError"] as e:
         log.warning("AI call rate-limited: %s", e)
         return None, ""
-    except anthropic.APIStatusError as e:
+    except E["APIStatusError"] as e:
         log.warning("AI call failed (%s): %s", e.status_code, e.message)
         return None, ""
-    if resp.stop_reason != "end_turn":
-        log.warning("AI call stopped with %s", resp.stop_reason)
+    if not clean:
+        log.warning("AI call did not finish cleanly (refusal or length)")
         return None, ""
-    text = next((b.text for b in resp.content if b.type == "text"), "")
     try:
-        return json.loads(text), resp.model
+        return json.loads(text), model
     except ValueError:
         log.warning("AI returned invalid JSON")
         return None, ""

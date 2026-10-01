@@ -86,9 +86,9 @@
     <td>{% if p.status == 'short' %}<button class="btn sm pri" hx-get="/pay/{{ p.payment_no }}/dispute/" hx-target="#modal" {% perm 'dispute' %}>Dispute</button>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
     {% for p in shorts %}
     <div class="card sug"><div class="sug-h"><b>Deduction on {{ p.payment_no }}: {{ p.deduction_h|sar }}</b><span class="small muted">Amazon's reason: “{{ p.reason|default:"none given" }}”</span>
-      {% if ai_on %}<span class="sug-act"><button class="btn sm" hx-post="/matching/review/deduction/{{ p.payment_no }}/" hx-vals='{"ai": "1"}' hx-swap="none" {% perm 'dispute' %}>Ask Claude</button></span>{% endif %}</div>
-      <div class="sug-i best sug-ded"><div class="sug-t"><b>Suggested: {{ p.ded.label }}</b>{% if p.ded.method == 'ai' %} {% chip "Claude" "info" %}{% endif %}<span class="small mono" style="margin-left:auto" title="Confidence">{{ p.ded.score }}</span></div>
-        <div class="small muted">{{ p.ded.reasons|join:" · " }}</div>{% if p.ded.ai_rationale %}<div class="small sug-ai">Claude: {{ p.ded.ai_rationale }}</div>{% endif %}
+      {% if ai_on %}<span class="sug-act"><button class="btn sm" hx-post="/matching/review/deduction/{{ p.payment_no }}/" hx-vals='{"ai": "1"}' hx-swap="none" {% perm 'dispute' %}>Ask AI</button></span>{% endif %}</div>
+      <div class="sug-i best sug-ded"><div class="sug-t"><b>Suggested: {{ p.ded.label }}</b>{% if p.ded.method == 'ai' %} {% chip "AI" "info" %}{% endif %}<span class="small mono" style="margin-left:auto" title="Confidence">{{ p.ded.score }}</span></div>
+        <div class="small muted">{{ p.ded.reasons|join:" · " }}</div>{% if p.ded.ai_rationale %}<div class="small sug-ai">AI ({{ p.ded.ai_model }}): {{ p.ded.ai_rationale }}</div>{% endif %}
         <div class="sug-btns"><button class="btn sm {% if p.ded.extra.action == 'dispute' %}pri{% endif %}" hx-get="/pay/{{ p.payment_no }}/dispute/" hx-target="#modal" {% perm 'dispute' %}>Dispute{% if p.ded.extra.action == 'dispute' %} (note drafted){% endif %}</button>
           <button class="btn sm" hx-get="/pay/{{ p.payment_no }}/accept/" hx-target="#modal" {% perm 'dispute' %}>Accept deduction</button></div></div></div>
     {% if p.dn_sugs %}{% with sugs=p.dn_sugs kind="pay_dn" source=p.payment_no perm_name="dispute" %}{% include "partials/suggestions.html" %}{% endwith %}{% endif %}

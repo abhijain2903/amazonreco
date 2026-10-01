@@ -54,13 +54,13 @@ def review(request, kind, source):
     if kind == "deduction":
         from payments.models import Payment
         s = svc.refresh_deduction(get_object_or_404(Payment, payment_no=source), use_ai=use_ai)
-        return htmx.done(request, ("Claude: " + s.ai_rationale) if s.method == "ai" else "Suggestion refreshed", "info")
+        return htmx.done(request, (f"AI ({s.ai_model}): " + s.ai_rationale) if s.method == "ai" else "Suggestion refreshed", "info")
     obj = _source_obj(kind, source)
     rows = svc.refresh(kind, obj, use_ai=use_ai)
     picked = next((r for r in rows if r.method == "ai"), None)
     if use_ai:
-        msg = (f"Claude suggests {picked.label.split(' · ')[0]}: {picked.ai_rationale}" if picked else
-               (rows[0].extra.get("ai_note") or "Claude found no convincing match.") if rows else "No candidates to review.")
+        msg = (f"AI ({picked.ai_model}) suggests {picked.label.split(' · ')[0]}: {picked.ai_rationale}" if picked else
+               (rows[0].extra.get("ai_note") or "The AI found no convincing match.") if rows else "No candidates to review.")
         return htmx.done(request, msg, "info")
     return htmx.done(request, f"{len(rows)} suggestion{'s' if len(rows) != 1 else ''} found" if rows else "No likely match found", "info")
 
@@ -75,9 +75,9 @@ def _source_obj(kind, source):
 
 @require_POST
 def ai_connect(request):
-    cfg = svc.connect_ai(request.user, request.POST.get("provider", "off"), request.POST.get("api_key", ""))
-    msg = {"off": "Claude disconnected", "anthropic": "Claude connected via the Anthropic API",
-           "bedrock": "Claude set to Amazon Bedrock"}[cfg.ai_provider]
+    cfg = svc.connect_ai(request.user, request.POST.get("provider", "off"), request.POST.get("api_key", ""), request.POST.get("model", ""))
+    msg = {"off": "AI disconnected", "anthropic": "Connected to Claude via the Anthropic API", "openai": "Connected to OpenAI",
+           "bedrock": "Set to Claude on Amazon Bedrock"}[cfg.ai_provider]
     return htmx.done(request, msg + ". Use Test connection to check it.", "ok" if cfg.ai_provider != "off" else "info", drawer=False)
 
 

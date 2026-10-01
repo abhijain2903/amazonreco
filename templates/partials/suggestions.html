@@ -3,17 +3,17 @@
   <div class="sug-h"><b>Suggested {% if kind == 'pay_dn' %}debit note{% elif kind == 'dn_promo' %}promotion{% else %}match{% endif %}</b>
     <span class="small muted">{% if kind == 'pay_inv' %}Scored on invoice reference, amount and timing.{% elif kind == 'pay_dn' %}Scored on the deducted amount, the deduction text and timing.{% else %}Scored on agreement #, models, rates and timing.{% endif %} You decide.</span>
     <span class="sug-act"><button class="btn sm ghost" hx-post="/matching/review/{{ kind }}/{{ source }}/" hx-swap="none" {% perm perm_name %}>{% icon 'refresh' %}<span>Refresh</span></button>
-    {% if ai_on %}<button class="btn sm" hx-post="/matching/review/{{ kind }}/{{ source }}/" hx-vals='{"ai": "1"}' hx-swap="none" {% perm perm_name %}>Ask Claude</button>{% endif %}</span></div>
+    {% if ai_on %}<button class="btn sm" hx-post="/matching/review/{{ kind }}/{{ source }}/" hx-vals='{"ai": "1"}' hx-swap="none" {% perm perm_name %}>Ask AI</button>{% endif %}</span></div>
   {% for s in sugs %}
   <div class="sug-i{% if forloop.first %} best{% endif %}">
-    <div class="sug-t"><b class="mono">{{ s.label }}</b>{% if s.method == 'ai' %} {% chip "Claude's pick" "info" %}{% endif %}
+    <div class="sug-t"><b class="mono">{{ s.label }}</b>{% if s.method == 'ai' %} {% chip "AI pick" "info" %}{% endif %}
       <span class="sug-score" title="Match score {{ s.score }} of 100"><i class="{% if s.score >= 80 %}hi{% elif s.score >= 60 %}mid{% else %}lo{% endif %}" style="width:{{ s.score }}%"></i></span><span class="small mono">{{ s.score }}</span></div>
     <div class="small muted">{{ s.reasons|join:" · " }}</div>
-    {% if s.ai_rationale %}<div class="small sug-ai">Claude: {{ s.ai_rationale }}</div>{% endif %}
+    {% if s.ai_rationale %}<div class="small sug-ai">AI ({{ s.ai_model }}): {{ s.ai_rationale }}</div>{% endif %}
     <div class="sug-btns"><button class="btn sm pri" hx-post="/matching/{{ s.pk }}/accept/" hx-vals='{"version": "{{ s.version }}"}' hx-swap="none" {% perm perm_name %}>{% icon 'check' %}<span>Accept</span></button>
       <button class="btn sm ghost" hx-post="/matching/{{ s.pk }}/reject/" hx-vals='{"version": "{{ s.version }}"}' hx-swap="none" {% perm perm_name %}>Not this one</button></div>
   </div>
   {% empty %}
-  <div class="small muted sug-i">{% if sugs_note %}{{ sugs_note }}{% else %}No likely match found.{% endif %}{% if ai_on %} Ask Claude to look, or{% endif %} match by hand below.</div>
+  <div class="small muted sug-i">{% if sugs_note %}{{ sugs_note }}{% else %}No likely match found.{% endif %}{% if ai_on %} Ask AI to look, or{% endif %} match by hand below.</div>
   {% endfor %}
 </div>

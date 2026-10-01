@@ -175,37 +175,50 @@ def reject(user, sid, version=None):
 
 def _audit_decision(user, s, what):
     entity = "dn" if s.kind == "dn_promo" else "payment"
-    by = f"Claude ({s.ai_model})" if s.method == "ai" else "the matching rules"
+    by = f"AI ({s.ai_model})" if s.method == "ai" else "the matching rules"
     audit(entity, s.source, f"Match suggestion {what}: {s.label} (score {s.score}, suggested by {by})", user,
           action=f"suggestion_{what}", after={"targets": s.targets, "reasons": s.reasons, "ai_rationale": s.ai_rationale})
 
 
 @transaction.atomic
-def connect_ai(user, provider, api_key=""):
-    """Connect Claude from Settings → Matching. The key is write-only: encrypted at rest, never shown back or
-    written to the audit trail (only its last 4 characters are kept for display)."""
+def connect_ai(user, provider, api_key="", model=""):
+    """Connect an AI provider from Settings → Matching. The key is write-only: encrypted at rest, never shown back or
+    written to the audit trail (only its last 4 characters are kept for display), and only ever sent to the provider
+    it was entered for."""
     import re
 
     from .secrets import encrypt
     require(user, "settings")
-    if provider not in ("off", "anthropic", "bedrock"):
-        raise CommandError("Pick Anthropic API, Amazon Bedrock or Not connected.")
+    labels = {"off": "Not connected", "anthropic": "Claude (Anthropic API)", "openai": "OpenAI", "bedrock": "Claude on Amazon Bedrock"}
+    if provider not in labels:
+        raise CommandError("Pick Anthropic API, OpenAI, Amazon Bedrock or Not connected.")
     cfg = MatchSettings.get()
-    before = dict(provider=cfg.ai_provider, key=cfg.api_key_hint and f"…{cfg.api_key_hint}")
-    api_key = (api_key or "").strip()
+    before = dict(provider=cfg.ai_provider, model=cfg.ai_model, key=cfg.api_key_hint and f"…{cfg.api_key_hint}")
+    api_key, model = (api_key or "").strip(), (model or "").strip()
     if api_key:
-        if not re.fullmatch(r"sk-ant-[A-Za-z0-9_\-]{20,}", api_key):
-            raise CommandError("That does not look like a Claude API key. It starts with sk-ant- (Claude Console → API keys).")
-        cfg.api_key_enc, cfg.api_key_hint = encrypt(api_key), api_key[-4:]
+        formats = {"anthropic": (r"sk-ant-[A-Za-z0-9_\-]{20,}", "a Claude API key. It starts with sk-ant- (Claude Console → API keys)"),
+                   "openai": (r"sk-[A-Za-z0-9_\-]{20,}", "an OpenAI API key. It starts with sk- (OpenAI dashboard → API keys)")}
+        if provider not in formats:
+            raise CommandError(f"{labels[provider]} does not use an API key.")
+        rx, what = formats[provider]
+        if not re.fullmatch(rx, api_key) or (provider == "openai" and api_key.startswith("sk-ant-")):
+            raise CommandError(f"That does not look like {what}.")
+        cfg.api_key_enc, cfg.api_key_hint, cfg.api_key_for = encrypt(api_key), api_key[-4:], provider
         cfg.api_key_set_at, cfg.api_key_set_by = timezone.now(), actor_name(user)
-    if provider == "anthropic" and not cfg.api_key_enc:
-        raise CommandError("Enter the API key to connect the Anthropic API.")
+    if provider in ("anthropic", "openai") and not (cfg.api_key_enc and cfg.api_key_for == provider):
+        raise CommandError(f"Enter the {labels[provider]} API key to connect it.")
+    if model and not re.fullmatch(r"[A-Za-z0-9._:/\-]{2,80}", model):
+        raise CommandError("A model name uses letters, digits, dots, dashes, colons or slashes, e.g. the name shown in the provider's model list.")
+    if provider == "openai" and not (model or (cfg.ai_provider == "openai" and cfg.ai_model)):
+        raise CommandError("Enter the OpenAI model to use (as named in your OpenAI account).")
+    if model or provider != cfg.ai_provider:
+        cfg.ai_model = model
     cfg.ai_provider = provider
     cfg.bump()
     cfg.save()
-    audit("settings", "matching", f"Claude connection set to {dict(cfg._meta.get_field('ai_provider').choices)[provider]}"
-          + (f" with a new API key (…{cfg.api_key_hint})" if api_key else ""), user, action="configure_ai",
-          before=before, after=dict(provider=provider, key=cfg.api_key_hint and f"…{cfg.api_key_hint}"))
+    audit("settings", "matching", f"AI connection set to {labels[provider]}" + (f", model {cfg.ai_model}" if cfg.ai_model else "")
+          + (f", with a new API key (…{cfg.api_key_hint})" if api_key else ""), user, action="configure_ai",
+          before=before, after=dict(provider=provider, model=cfg.ai_model, key=cfg.api_key_hint and f"…{cfg.api_key_hint}"))
     return cfg
 
 
@@ -214,13 +227,13 @@ def remove_ai_key(user):
     require(user, "settings")
     cfg = MatchSettings.get()
     hint = cfg.api_key_hint
-    cfg.api_key_enc = cfg.api_key_hint = cfg.api_key_set_by = ""
+    cfg.api_key_enc = cfg.api_key_hint = cfg.api_key_set_by = cfg.api_key_for = ""
     cfg.api_key_set_at = None
-    if cfg.ai_provider == "anthropic":
+    if cfg.ai_provider in ("anthropic", "openai"):
         cfg.ai_provider = "off"
     cfg.bump()
     cfg.save()
-    audit("settings", "matching", f"Claude API key removed (…{hint})" if hint else "Claude API key removed", user, action="configure_ai")
+    audit("settings", "matching", f"AI API key removed (…{hint})" if hint else "AI API key removed", user, action="configure_ai")
     return cfg
 
 
@@ -228,7 +241,7 @@ def test_ai(user):
     from . import ai
     require(user, "settings")
     ok, msg = ai.test_connection()
-    audit("settings", "matching", f"Claude connection tested: {'OK' if ok else 'failed'}. {msg}", user, action="test_ai")
+    audit("settings", "matching", f"AI connection tested: {'OK' if ok else 'failed'}. {msg}", user, action="test_ai")
     return ok, msg
 
 

@@ -182,7 +182,7 @@ def test_drawers_show_suggestions(as_user):
     assert b"Deduction on" in r.content and b"link to the debit note" in r.content and b"Suggested debit note" in r.content
     r = c.get(f"/pay/{pay(reason='Shortage').payment_no}/dispute/")
     assert b"Proof of delivery attached" in r.content and b"Drafted by" in r.content
-    assert b"Ask Claude" not in r.content      # AI not connected in tests
+    assert b"Ask AI" not in r.content      # AI not connected in tests
 
 
 def test_matching_settings(as_user):
@@ -281,10 +281,10 @@ def test_claude_reads_a_deduction(claude, as_user):
     claude({"type": "shortage", "action": "dispute", "confidence": 88, "rationale": "ASN and invoice agree; delivery was on time.",
             "dispute_note": "ASN quantities were delivered in full on the booked slot. Please reverse SAR 2,300."})
     r = as_user("priya").post(f"/matching/review/deduction/{p.payment_no}/", {"ai": "1"})
-    assert "Claude" in toast(r)["msg"]
+    assert toast(r)["msg"].startswith("AI (claude-opus-5)")
     s = MatchSuggestion.objects.get(kind="deduction", source=p.payment_no, status="pending")
     assert s.method == "ai" and s.extra["action"] == "dispute" and "reverse SAR 2,300" in s.extra["note"]
-    assert b"Drafted by Claude" in as_user("priya").get(f"/pay/{p.payment_no}/dispute/").content
+    assert b"Drafted by AI (claude-opus-5)" in as_user("priya").get(f"/pay/{p.payment_no}/dispute/").content
 
 
 def test_refusal_or_outage_keeps_the_rules_result(claude, settings, monkeypatch):
@@ -389,3 +389,100 @@ def test_test_connection_explains_a_rejected_key(fake_claude, as_user):
     connect(as_user, provider="anthropic", api_key=KEY)
     t = toast(as_user("admin").post("/matching/settings/ai/test/"))
     assert t["tone"] == "bad" and "rejected" in t["msg"]
+
+
+# ---------- OpenAI as the provider ----------
+OPENAI_KEY = "sk-proj-" + "y" * 40 + "WxYz"
+
+
+class FakeOpenAI:
+    """Answers POST /chat/completions like the OpenAI API and records what it was sent."""
+
+    def __init__(self, answer, finish="stop", refusal=None, status=200):
+        self.requests = []
+        outer = self
+
+        class H(BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                outer.requests.append(dict(path=self.path, headers={k.lower(): v for k, v in self.headers.items()}, body=body))
+                msg = {"role": "assistant", "content": None if refusal else json.dumps(answer), "refusal": refusal}
+                out = {"id": "chatcmpl-test", "object": "chat.completion", "created": 1, "model": body["model"],
+                       "choices": [{"index": 0, "message": msg, "finish_reason": finish}],
+                       "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}
+                if status != 200:
+                    out = {"error": {"message": "Incorrect API key provided", "type": "invalid_request_error", "code": "invalid_api_key"}}
+                data = json.dumps(out).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *a):
+                pass
+
+        self.server = HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.server.server_port}/v1"
+
+
+@pytest.fixture
+def fake_openai(monkeypatch):
+    made = []
+
+    def start(answer=None, **kw):
+        fake = FakeOpenAI(answer or {"choice": 0, "confidence": 80, "rationale": "Same amount and the year is trimmed."}, **kw)
+        monkeypatch.setenv("OPENAI_BASE_URL", fake.url)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.setattr(ai, "_client", None)
+        made.append(fake)
+        return fake
+    yield start
+    for f in made:
+        f.server.shutdown()
+    ai._client = None
+
+
+def test_openai_needs_its_own_key_and_a_model(as_user):
+    assert toast(connect(as_user, provider="openai", api_key=OPENAI_KEY))["tone"] == "bad"            # no model
+    assert toast(connect(as_user, provider="openai", api_key=KEY, model="gpt-x"))["tone"] == "bad"   # a Claude key
+    connect(as_user, provider="anthropic", api_key=KEY)
+    t = toast(connect(as_user, provider="openai", model="gpt-x"))                                       # Claude key not reused
+    assert t["tone"] == "bad" and "OpenAI API key" in t["msg"]
+    assert toast(connect(as_user, provider="openai", api_key=OPENAI_KEY, model="gpt-x"))["tone"] == "ok"
+    c = ai.connection()
+    assert c["provider"] == "openai" and c["model"] == "gpt-x" and c["key"] == OPENAI_KEY and c["hint"] == "WxYz"
+    connect(as_user, provider="anthropic")                                                              # back to Claude: needs its key again
+    assert ai.connection()["provider"] == "openai"
+    page = as_user("admin").get("/settings/?tab=matching").content
+    assert OPENAI_KEY.encode() not in page and b"Connected to OpenAI" in page
+
+
+def test_openai_connection_test_and_suggestions(fake_openai, as_user):
+    fake = fake_openai()
+    connect(as_user, provider="openai", api_key=OPENAI_KEY, model="gpt-x")
+    t = toast(as_user("admin").post("/matching/settings/ai/test/"))
+    assert t["tone"] == "ok" and "OpenAI" in t["msg"]
+    assert fake.requests[-1]["headers"]["authorization"] == f"Bearer {OPENAI_KEY}"
+    p = Payment.objects.get(status="unmatched", hint__gt="")
+    ms.AI_CLOSE_CALL = 100
+    try:
+        rows = ms.refresh("pay_inv", p, use_ai=True)
+    finally:
+        ms.AI_CLOSE_CALL = 10
+    assert rows[0].method == "ai" and rows[0].ai_model == "gpt-x" and "trimmed" in rows[0].ai_rationale
+    body = fake.requests[-1]["body"]
+    assert body["model"] == "gpt-x" and body["messages"][0]["role"] == "system"
+    rf = body["response_format"]
+    assert rf["type"] == "json_schema" and rf["json_schema"]["strict"] is True and "choice" in rf["json_schema"]["schema"]["properties"]
+
+
+def test_openai_refusal_and_rejected_key(fake_openai, as_user):
+    p = pay(reason="Shortage")
+    fake_openai(refusal="I can't help with that.")
+    connect(as_user, provider="openai", api_key=OPENAI_KEY, model="gpt-x")
+    assert ms.refresh_deduction(p, use_ai=True).method == "rules"
+    fake_openai(status=401)
+    t = toast(as_user("admin").post("/matching/settings/ai/test/"))
+    assert t["tone"] == "bad" and "rejected" in t["msg"] and "OpenAI dashboard" in t["msg"]
