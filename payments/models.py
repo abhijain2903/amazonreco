@@ -57,6 +57,7 @@ class Dispute(Base):
     note = models.TextField(blank=True)
     amazon_case_id = models.CharField(max_length=40, blank=True, help_text="Case ID from Vendor Central")
     recovered_h = models.BigIntegerField(null=True, blank=True, help_text="Amount Amazon gave back (may be part of the claim)")
+    closed_at = models.DateTimeField(null=True, blank=True, help_text="When it was won or lost")
     recovered_in = models.CharField(max_length=30, blank=True, help_text="The later payment that brought the money back")
 
     class Meta:

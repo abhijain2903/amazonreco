@@ -85,7 +85,7 @@ def receive(user, no, counts, version=None):
     short = 0
     for l in r.lines.select_related("sku"):
         q, cond = counts.get(str(l.pk), (None, None))
-        q = l.qty if q in (None, "") else max(0, int(q))
+        q = l.qty if q in (None, "") else min(l.qty, max(0, int(q)))      # never more than Amazon asked to return
         cond = cond if cond in dict(CONDITIONS) else "good"
         if q == 0:
             cond = "missing"

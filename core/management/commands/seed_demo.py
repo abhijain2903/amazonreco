@@ -69,6 +69,7 @@ class Command(BaseCommand):
             self.messy()
             self.backorder_demo()
             self.returns_demo()
+            self.history()
             self.vendor_codes()
             self.documents()
         self.stdout.write(self.style.SUCCESS("Example data loaded."))
@@ -130,6 +131,59 @@ class Command(BaseCommand):
         if not inv.payments.exists():
             import_payment(f"RMT-{next_number('payment', 9102200)}", self.t(-2), inv.invoice_no, inv.total_h - c.amount_h,
                            c.amount_h, f"Vendor returns - {c.rtv_no}", at=self.t(-2))
+
+    def history(self):
+        """Make the past look like real operations, so reports have something to say: some POs confirmed late or
+        not in full, some ASNs late, missed appointments, and deductions that were accepted, lost or part-won.
+        Uses its own random generator so the rest of the demo data stays the same."""
+        from core.services import audit
+        from fulfilment.models import Shipment
+        from orders.models import PurchaseOrder
+        from payments.models import Dispute, Payment
+        rnd = random.Random(31)
+        done = list(PurchaseOrder.objects.filter(stage__in=["confirmed", "booked", "released", "asn", "slot", "delivered", "invoiced", "paid"])
+                    .exclude(lines__qty_backorder__gt=0).order_by("order_date").distinct())
+        for po in done:
+            if rnd.random() < 0.3:                       # acknowledged after the confirm-by time
+                PurchaseOrder.objects.filter(pk=po.pk).update(confirmed_at=po.confirm_by + timedelta(hours=rnd.randint(2, 20)))
+            if rnd.random() < 0.4:                       # Amazon ordered more than ME could confirm
+                l = rnd.choice(list(po.lines.all()))
+                extra = rnd.randint(2, 12)
+                l.qty_ordered += extra
+                l.decision, l.reason = "partial", rnd.choice(["Limited stock", "Limited stock", "Case-pack rounding"])
+                l.save(update_fields=["qty_ordered", "decision", "reason"])
+        ships = list(Shipment.objects.filter(po__stage__in=["delivered", "invoiced", "paid"]).select_related("po").order_by("submitted_at"))
+        for s in ships:
+            if rnd.random() < 0.2:                       # ASN sent after the truck left
+                Shipment.objects.filter(pk=s.pk).update(submitted_at=s.ship_date + timedelta(hours=rnd.randint(1, 6)))
+        for s, what in zip([s for s in ships if s.slot_id][1::4][:3], ["missed", "refused", "reschedule"]):
+            at = s.slot_start - timedelta(hours=rnd.randint(20, 40))
+            text = {"missed": "Appointment {} missed: truck late at the gate. Book a new slot",
+                    "refused": "Appointment {} refused by Amazon: carton labels unreadable. Book a new slot",
+                    "reschedule": "Rescheduled: Carrier Central slot {} moved by Amazon"}[what].format(s.slot_id)
+            audit("po", s.po.po_no, text, name=self.names["Logistics"], action=what, at=at)
+            Shipment.objects.filter(pk=s.pk).update(reschedules=1)
+        # Older deductions, as finance resolved them
+        pays = list(Payment.objects.filter(status="matched", po__stage="paid").select_related("invoice", "po").order_by("remit_date"))
+        plan = [("Chargeback - ASN accuracy", 0.012, "accepted", None), ("Units not received at FC", 0.03, "lost", "shortage"),
+                ("Cost variance on PO line", 0.025, "partial", "price"), ("Co-op advertising accrual", 0.02, "accepted", None),
+                ("Chargeback - carton labels", 0.008, "won", "chargeback")]
+        for p, (reason, share, outcome, dtype) in zip(pays[1::3], plan):
+            amt = round(p.invoice.total_h * share)
+            Payment.objects.filter(pk=p.pk).update(paid_h=p.paid_h - amt, deduction_h=amt, reason=reason,
+                                                   status="accepted" if outcome in ("accepted", "lost") else "recovered")
+            if dtype:
+                rec = {"lost": None, "partial": round(amt * 0.6), "won": amt}[outcome]
+                d = Dispute.objects.create(case_no=f"DSP-{next_number('dispute', 41):04d}", type=dtype, ref=p.payment_no, po=p.po, amount_h=amt,
+                                           subtype="labels" if dtype == "chargeback" else "", status="lost" if outcome == "lost" else "won",
+                                           recovered_h=rec, closed_at=p.remit_date + timedelta(days=rnd.randint(12, 30)),
+                                           amazon_case_id=f"{rnd.randint(10**9, 10**10 - 1)}", due=p.remit_date + timedelta(days=14),
+                                           note=reason)
+                opened = p.remit_date + timedelta(days=rnd.randint(1, 4))
+                Dispute.objects.filter(pk=d.pk).update(created_at=opened)
+                audit("dispute", d.case_no, "Dispute opened", name=self.names["Finance"], at=opened)
+            audit("po", p.po.po_no, f"Deduction of SAR {amt / 100:,.0f} ({reason}) " + {"accepted": "accepted", "lost": "disputed and lost",
+                  "partial": "disputed, part recovered", "won": "disputed and recovered"}[outcome], name=self.names["Finance"], at=p.remit_date + timedelta(days=2))
 
     def documents(self):
         """The files each seeded PO would have produced (acknowledgement, ASN, carton labels, invoice), so the Documents
@@ -375,7 +429,8 @@ class Command(BaseCommand):
         # an older won dispute
         paid = list(PurchaseOrder.objects.filter(stage="paid"))
         d2 = Dispute.objects.create(case_no=f"DSP-{next_number('dispute', 41):04d}", type="shortage", ref=f"RMT-{9102100 + self.ri(1, 90)}",
-                                    po=paid[3], amount_h=276000, status="won", due=self.t(-50), note="Proof of delivery showed full cartons received.")
+                                    po=paid[3], amount_h=276000, recovered_h=276000, status="won", closed_at=self.t(-51), due=self.t(-50),
+                                    note="Proof of delivery showed full cartons received.")
         Dispute.objects.filter(pk=d2.pk).update(created_at=self.t(-64))
         audit("dispute", d2.case_no, "Dispute opened", name=self.names["PIC"], at=self.t(-64))
         audit("dispute", d2.case_no, "Marked won. SAR 2,760 recovered", name=self.names["Finance"], at=self.t(-51))

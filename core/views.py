@@ -113,13 +113,14 @@ def action(request):
 
 
 def reports(request):
-    from .reports import report, rows
+    from .reports import TABS, export_sheets, report
     days = int(htmx.pick(request, "days", ["7", "30", "90"], "30"))
-    sections = report(days)
-    from .exports import wants_export, xlsx
+    tab = htmx.pick(request, "tab", [k for k, _ in TABS], "summary")
+    from .exports import wants_export, xlsx_book
     if wants_export(request):
-        return xlsx(f"Management_report_{days}d", ["Area", "Measure", "Value", "Detail"], rows(sections))
-    return render(request, "pages/reports.html", dict(sections=sections, days=days, periods=[7, 30, 90]))
+        return xlsx_book(f"Management_report_{days}d", export_sheets(days))
+    return render(request, "pages/reports.html", dict(r=report(tab, days), tab=tab, days=days, periods=[7, 30, 90],
+                                                      tabs=[dict(id=k, label=l) for k, l in TABS]))
 
 
 # ---------- shell partials ----------

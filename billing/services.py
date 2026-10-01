@@ -115,12 +115,22 @@ STATUS_TEXT = {"accepted": "Amazon accepted invoice {inv}", "on_hold": "Amazon p
                "rejected": "Amazon rejected invoice {inv}"}
 
 
+def pick_invoice(po, invoice_no=None):
+    """The invoice a command is about: the one named, or the PO's latest (one invoice per shipment)."""
+    if invoice_no:
+        inv = po.invoices.filter(invoice_no=invoice_no).first()
+        if not inv:
+            raise CommandError(f"Invoice {invoice_no} is not on PO {po.po_no}.")
+        return inv
+    return invoice_of(po)
+
+
 @transaction.atomic
-def set_invoice_status(user, po_no, status, note=""):
+def set_invoice_status(user, po_no, status, note="", invoice_no=None):
     """Amazon's answer to the invoice: accepted, on hold (price / quantity mismatch) or rejected."""
     require(user, "invoice")
     po = get_po(po_no, lock=True)
-    inv = invoice_of(po)
+    inv = pick_invoice(po, invoice_no)
     if not inv:
         raise CommandError("This PO has no invoice yet.")
     if status not in STATUS_TEXT:
@@ -140,11 +150,11 @@ def set_invoice_status(user, po_no, status, note=""):
 
 
 @transaction.atomic
-def resubmit_invoice(user, po_no, note=""):
+def resubmit_invoice(user, po_no, note="", invoice_no=None):
     """Send the corrected invoice again (after a rejection or to clear a hold)."""
     require(user, "invoice")
     po = get_po(po_no, lock=True)
-    inv = invoice_of(po)
+    inv = pick_invoice(po, invoice_no)
     if not inv or inv.amazon_status not in ("rejected", "on_hold"):
         raise CommandError("Only a rejected or held invoice is sent again.")
     inv.revision += 1
@@ -163,7 +173,7 @@ def resubmit_invoice(user, po_no, note=""):
 
 
 @transaction.atomic
-def issue_credit_memo(user, po_no, amount_h, reason, memo_no=""):
+def issue_credit_memo(user, po_no, amount_h, reason, memo_no="", invoice_no=None):
     """A credit memo against the invoice. If Amazon has already short-paid by about this much, the short payment is
     settled by the memo and the PO closes."""
     from django.db.models import Sum
@@ -174,7 +184,7 @@ def issue_credit_memo(user, po_no, amount_h, reason, memo_no=""):
     from .models import CreditMemo
     require(user, "invoice")
     po = get_po(po_no, lock=True)
-    inv = invoice_of(po)
+    inv = pick_invoice(po, invoice_no)
     if not inv:
         raise CommandError("This PO has no invoice yet.")
     reason = (reason or "").strip()[:200]

@@ -33,6 +33,8 @@
   }
   function reloadDrawer() {
     const d = $('#drawer [data-url]'); if (!d) return;
+    // Until the fresh drawer arrives its buttons are stale: a click now would be lost when the drawer is replaced.
+    const a = $('#drawer aside.drawer'); if (a) a.classList.add('reloading');
     htmx.ajax('GET', d.dataset.url, { target: '#drawer', swap: 'innerHTML' });
   }
   function closeDrawer() { $('#drawer').innerHTML = ''; }
@@ -45,7 +47,7 @@
   document.addEventListener('closeModal', () => setTimeout(closeModal, 0));
   document.addEventListener('openDrawer', e => htmx.ajax('GET', e.detail.url, { target: '#drawer', swap: 'innerHTML' }));
   // An autosaving form that stays open learns its record's new version (optimistic locking).
-  document.addEventListener('version', e => { const el = document.getElementById(e.detail.id); if (el) el.value = e.detail.v; });
+  document.addEventListener('version', e => { String(e.detail.id).split(',').forEach(id => { const el = document.getElementById(id); if (el) el.value = e.detail.v; }); });
 
   // Mobile menu button (no inline handlers: the Content-Security-Policy allows only script files).
   document.addEventListener('click', e => {

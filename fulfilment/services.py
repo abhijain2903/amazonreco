@@ -172,8 +172,11 @@ def submit_asn(user, po_no, version=None):
     check_version(po, version)
     if po.stage != "released" or not delivery_of(po):
         raise CommandError("The ASN needs a released order with a SAP delivery.")
-    if any(not c["asn_ok"] for c in asn_checks(po)):
+    ck = asn_checks(po)
+    if any(not c["asn_ok"] for c in ck):
         raise CommandError("ASN quantities must match the SAP delivery (R4).")
+    if not sum(c["asn"] for c in ck):
+        raise CommandError("This ASN has no units. Check the SAP delivery, or backorder the PO.")
     sh = _submit_asn(po, timezone.now(), user)
     rows = [["asn_no", "po_no", "ship_to", "ship_date", "cartons", "asin", "qty"]] + [
         [sh.asn_no, po.po_no, po.fc.code, timezone.localtime(sh.ship_date).date().isoformat(), sh.cartons, l.sku.asin, l.qty]

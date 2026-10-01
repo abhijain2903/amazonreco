@@ -29,7 +29,8 @@ def reserved_elsewhere(line):
     po = line.po
     earlier = Q(po__confirm_by__lt=po.confirm_by) | Q(po__confirm_by=po.confirm_by, po__po_no__lt=po.po_no)
     qs = (PoLine.objects.filter(sku_id=line.sku_id).exclude(po_id=po.pk)
-          .filter((Q(po__stage="new") & earlier) | Q(po__stage="confirmed", po__confirmed_at__gt=line.sku.stock_as_of)))
+          .filter((Q(po__stage="new") & earlier)
+                  | Q(po__stage__in=["confirmed", "booked", "released"], po__shipments__isnull=True, po__confirmed_at__gt=line.sku.stock_as_of)))
     return qs.aggregate(n=Sum("qty_confirmed"))["n"] or 0
 
 
@@ -269,11 +270,14 @@ def book_po(user, po_no, version=None, sap_order_no=None):
 
 
 def _release(po, at, user=None, name=None, with_delivery=True):
-    po.stage, po.released_at = "released", at
+    from fulfilment.services import to_ship
+    nothing_now = not to_ship(po)
+    po.stage, po.released_at = ("backorder" if nothing_now else "released"), at
     po.bump()
     po.save()
-    audit("po", po.po_no, "Credit check passed. Order released for shipment", user, name=name, action="release", at=at)
-    if with_delivery:
+    audit("po", po.po_no, "Credit check passed. Order released for shipment"
+          + (". Everything is backordered: it ships when the stock arrives" if nothing_now else ""), user, name=name, action="release", at=at)
+    if with_delivery and not nothing_now:
         from fulfilment.services import make_delivery
         make_delivery(po, at + timedelta(hours=2))
 
@@ -373,6 +377,31 @@ def amazon_change(user, po_no, new_qty, cancel=False, reason="", window_end=None
     if po.stage not in CHANGEABLE:
         raise CommandError("Changes can only be applied before the ASN is sent. After that, raise it with Amazon as a shortage.")
     changes = []
+    from fulfilment.services import delivery_of, open_qty, shipped_qty
+    if cancel and po.shipments.exists():
+        # Part of the PO already went out: Amazon cancels only the rest. Close on what shipped.
+        done = shipped_qty(po)
+        pending = delivery_of(po)
+        if pending:
+            pending.delete()                       # the SAP delivery for the rest is cancelled too
+        cut = 0
+        for l in po_lines(po):
+            keep = done.get(l.sku_id, 0)
+            if l.qty_ordered > keep:
+                cut += max(0, l.committed - keep)
+                l.qty_ordered, l.qty_confirmed, l.qty_backorder = keep, keep, 0
+                if not keep:
+                    l.decision, l.reason = "reject", "Cancelled by Amazon"
+                l.save()
+        po.stage = "invoiced"
+        po.bump()
+        po.save()
+        audit("po", po.po_no, f"Amazon cancelled the rest of the PO: {cut:,} units will not ship" + (f". {reason}" if reason else ""),
+              user, action="amazon_cancel", reason=reason)
+        from payments.services import settle_po
+        settle_po(po)
+        refresh_open_pos()
+        return po, ["Rest of the PO cancelled"]
     if cancel:
         before = po.stage
         po.stage = "cancelled"
@@ -384,7 +413,6 @@ def amazon_change(user, po_no, new_qty, cancel=False, reason="", window_end=None
               reason=reason, before={"stage": before}, after={"stage": "cancelled"})
         refresh_open_pos()
         return po, ["PO cancelled"]
-    from fulfilment.services import delivery_of, open_qty, shipped_qty
     d = delivery_of(po)
     done = shipped_qty(po)
     for l in po_lines(po):
@@ -414,8 +442,9 @@ def amazon_change(user, po_no, new_qty, cancel=False, reason="", window_end=None
                     l.decision = "accept"
             if d:
                 dl = d.lines.filter(sku=l.sku).first()
-                if dl and (dl.asn_qty if dl.asn_qty is not None else dl.qty) > l.qty_confirmed:
-                    dl.asn_qty = l.qty_confirmed
+                room = max(0, l.committed - done.get(l.sku_id, 0))
+                if dl and (dl.asn_qty if dl.asn_qty is not None else dl.qty) > room:
+                    dl.asn_qty = room
                     dl.save()
         l.save()
     moved = window_end and window_end != po.window_end
@@ -427,7 +456,7 @@ def amazon_change(user, po_no, new_qty, cancel=False, reason="", window_end=None
         refresh_suggestions(po)
     if all(l.qty_ordered == 0 for l in po_lines(po)):
         po.stage = "cancelled"
-    elif po.stage == "backorder" and not open_qty(po):
+    elif po.shipments.exists() and not open_qty(po) and (po.stage == "backorder" or (po.stage == "released" and not delivery_of(po))):
         po.stage = "invoiced"                # nothing left to ship
     po.bump()
     po.save()

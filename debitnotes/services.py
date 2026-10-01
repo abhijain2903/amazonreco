@@ -29,12 +29,16 @@ def evaluate(dn, cfg=None):
     # Earlier debit notes on the same agreement (instalments, top-ups): what they already billed
     earlier = (DebitNote.objects.filter(agreement_no=dn.agreement_no).exclude(pk=dn.pk)
                .filter(Q(dn_date__lt=dn.dn_date) | Q(dn_date=dn.dn_date, created_at__lt=dn.created_at)))
+    # Only validated debit notes count, at what was approved (a disputed excess was not accepted as billed).
     prior, prior_fees = {}, 0
-    for pl in DnLine.objects.filter(dn__in=earlier):
-        if pl.sku_id is None:
-            prior_fees += pl.units * pl.rate_h
-        else:
-            prior[pl.sku_id] = prior.get(pl.sku_id, 0) + pl.units
+    for e in earlier.filter(validated=True).prefetch_related("lines"):
+        charged = sum(x.units * x.rate_h for x in e.lines.all())
+        share = 1 if not charged else min(1, e.approved_h / charged)
+        for pl in e.lines.all():
+            if pl.sku_id is None:
+                prior_fees += round(pl.units * pl.rate_h * share)
+            else:
+                prior[pl.sku_id] = prior.get(pl.sku_id, 0) + int(pl.units * share)
     fees = list(promo.fees.all())
     r = engine.dn_check([{k: v for k, v in l.items() if k not in ("sku_obj", "label")} for l in lines], pls, dn.dn_date, promo.end, cfg,
                         prior=prior, fees_h=sum(f.amount_h for f in fees) if fees else None, prior_fees_h=prior_fees,

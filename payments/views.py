@@ -23,7 +23,7 @@ def ageing(now=None):
     from django.conf import settings
     from django.db.models import Prefetch
 
-    from .services import COUNTED
+    from .services import COUNTED, invoice_settled
     now = now or timezone.now()
     terms = settings.HUB_PAYMENT_TERMS_DAYS
     rows = []
@@ -32,9 +32,9 @@ def ageing(now=None):
     for inv in invs:
         paid = sum(p.paid_h for p in inv.payments.all())
         owed = inv.net_due_h - paid
-        if owed <= 0:
+        if owed <= 0 or invoice_settled(inv):        # paid, or the rest was accepted / recovered
             continue
-        days = (timezone.localdate(now) - timezone.localtime(inv.invoice_date).date()).days
+        days = max(0, (timezone.localdate(now) - timezone.localtime(inv.invoice_date).date()).days)
         bucket = next(b for b, lo, hi in BUCKETS if lo <= days <= hi)
         disputed = any(p.status == "disputed" for p in inv.payments.all())
         rows.append(dict(inv=inv, po=inv.po, paid=paid, owed=owed, days=days, bucket=bucket, overdue=days > terms,

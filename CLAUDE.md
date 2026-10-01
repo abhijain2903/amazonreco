@@ -15,7 +15,7 @@ python manage.py migrate
 python manage.py seed_demo --reset           # deterministic example data; users faisal/noura/omar/khalid/reem/priya/tariq/admin, password "demo"
 python manage.py runserver                   # http://127.0.0.1:8000 (dev user-picker login)
 python manage.py procrastinate worker        # background + periodic jobs
-pytest                                       # 244 tests: rules, flows F1-F7, uploads U1-U10, API, access matrix, matching, phases A-C, smoke — needs Postgres
+pytest                                       # 255 tests: rules, flows F1-F7, uploads U1-U10, API, access matrix, matching, phases A-C, review regressions, smoke — needs Postgres
 E2E_BASE_URL=http://127.0.0.1:8000 pytest tests/e2e -m e2e -p no:django   # Playwright; re-seed first
 ```
 DB settings come from `POSTGRES_*` env vars (default db `mehub`, host `localhost`). `DJANGO_DEBUG` defaults to true.

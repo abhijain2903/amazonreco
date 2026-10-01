@@ -91,6 +91,9 @@ def record_batch_cn(user, batch_no, cn_no, cn_h, cn_date=None):
         raise CommandError(f"Batch {batch_no} has no claims waiting for a credit note.")
     if not (cn_no or "").strip() or not cn_h or cn_h <= 0:
         raise CommandError("Enter the credit note number and amount.")
+    cs = [c for c in cs if c.amount_h - (c.cn_h or 0) > 0]
+    if not cs:
+        raise CommandError(f"Nothing is still owed on batch {batch_no}.")
     owed = [c.amount_h - (c.cn_h or 0) for c in cs]
     total = sum(owed)
     left, at = cn_h, timezone.now()

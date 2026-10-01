@@ -47,6 +47,22 @@ def add_working_hours(start, hours):
         t = datetime.combine(d, DAY_END, tz)
 
 
+def working_hours_between(a, b):
+    """Working hours (08:00–17:00 on working days) from a to b; 0 if b is before a."""
+    if not a or not b or b <= a:
+        return 0.0
+    a, b = timezone.localtime(a), timezone.localtime(b)
+    tz, total, d = a.tzinfo, 0.0, a.date()
+    while d <= b.date():
+        if is_working_day(d):
+            lo = max(datetime.combine(d, DAY_START, tz), a)
+            hi = min(datetime.combine(d, DAY_END, tz), b)
+            if hi > lo:
+                total += (hi - lo).total_seconds() / 3600
+        d += timedelta(days=1)
+    return total
+
+
 def add_working_days(start, days):
     """The same time of day, `days` working days later."""
     t = timezone.localtime(start)

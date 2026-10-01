@@ -19,9 +19,23 @@ def sar(h):
 
 def xlsx(filename, headers, rows):
     """headers: column titles; rows: lists of values (datetimes shown in Riyadh time, money already in SAR)."""
+    return xlsx_book(filename, [(filename[:31], headers, rows)])
+
+
+def xlsx_book(filename, sheets):
+    """Several sheets in one workbook: [(title, headers, rows)]."""
     wb = Workbook()
-    ws = wb.active
-    ws.title = filename[:31]
+    wb.remove(wb.active)
+    for title, headers, rows in sheets:
+        _sheet(wb.create_sheet(title[:31]), headers, rows)
+    buf = io.BytesIO()
+    wb.save(buf)
+    resp = HttpResponse(buf.getvalue(), content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    resp["Content-Disposition"] = f'attachment; filename="{filename}_{timezone.localdate():%Y-%m-%d}.xlsx"'
+    return resp
+
+
+def _sheet(ws, headers, rows):
     ws.append(headers)
     for c in ws[1]:
         c.font = Font(bold=True)
@@ -36,8 +50,3 @@ def xlsx(filename, headers, rows):
             elif isinstance(cell.value, float):
                 cell.number_format = "#,##0.00"
     ws.freeze_panes = "A2"
-    buf = io.BytesIO()
-    wb.save(buf)
-    resp = HttpResponse(buf.getvalue(), content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    resp["Content-Disposition"] = f'attachment; filename="{filename}_{timezone.localdate():%Y-%m-%d}.xlsx"'
-    return resp

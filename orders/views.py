@@ -201,15 +201,19 @@ def _line_values(post):
 @require_POST
 def lines_save(request, po_no):
     """Autosave of the lines form. Only a changed decision re-renders the drawer (it changes qty and reason options)."""
+    before = dict(PoLine.objects.filter(po__po_no=po_no).values_list("pk", "decision"))
     po = svc.save_lines(request.user, po_no, _line_values(request.POST), request.POST.get("version"))
-    changed = request.headers.get("HX-Trigger-Name", "").startswith("d-")
+    # A new decision changes which inputs are editable (qty, date) and the reason list, so the drawer re-renders.
+    changed = before != dict(PoLine.objects.filter(po=po).values_list("pk", "decision"))
     return htmx.done(request, refresh=False, drawer=changed, version=("po-lines-v", po.version))
 
 
 @require_POST
 def accept_green(request, po_no):
     n = svc.accept_all_green(request.user, po_no)
-    return htmx.done(request, f"{n} green line{'s' if n != 1 else ''} set to accept", refresh=False)
+    # The PO's version moved on: tell the open drawer at once, so a quick "Confirm PO" is not refused as stale
+    return htmx.done(request, f"{n} green line{'s' if n != 1 else ''} set to accept", refresh=False,
+                     version=("po-lines-v,po-confirm-v", get_po(po_no).version))
 
 
 @require_POST
@@ -331,13 +335,14 @@ def fix_billing(request, po_no):
 
 @require_POST
 def invoice_status(request, po_no):
-    inv = billing.set_invoice_status(request.user, po_no, request.POST.get("status", ""), request.POST.get("note", ""))
+    inv = billing.set_invoice_status(request.user, po_no, request.POST.get("status", ""), request.POST.get("note", ""),
+                                     request.POST.get("invoice_no") or None)
     return htmx.done(request, f"Invoice {inv.invoice_no}: {inv.get_amazon_status_display().lower()}", "info")
 
 
 @require_POST
 def invoice_resubmit(request, po_no):
-    inv, f = billing.resubmit_invoice(request.user, po_no, request.POST.get("note", ""))
+    inv, f = billing.resubmit_invoice(request.user, po_no, request.POST.get("note", ""), request.POST.get("invoice_no") or None)
     return htmx.done(request, f"Invoice {inv.invoice_no} sent again (revision {inv.revision})", file=f)
 
 
@@ -346,7 +351,7 @@ def credit_memo(request, po_no):
     from core.services import to_h
     amt = request.POST.get("amount")
     m = billing.issue_credit_memo(request.user, po_no, to_h(amt) if amt not in (None, "") else None, request.POST.get("reason", ""),
-                                  request.POST.get("memo_no", ""))
+                                  request.POST.get("memo_no", ""), request.POST.get("invoice_no") or None)
     return htmx.done(request, f"Credit memo {m.memo_no} recorded")
 
 

@@ -130,11 +130,15 @@ def dn_check(dn_lines, promo_lines, dn_date, promo_end, cfg: Cfg, *, prior=None,
     prior = prior or {}
     out, charged, expected = [], 0, 0
     fee_left = None if fees_h is None else max(0, fees_h - prior_fees_h)
+    seen = {}
+    for l in dn_lines:
+        seen[l["sku"]] = seen.get(l["sku"], 0) + 1
+    used = {}                                   # units of a model already counted on earlier lines of this DN
     for l in dn_lines:
         ch = l["units"] * l["rate_h"]
-        if l["sku"] is None:
+        if l["sku"] is None:                    # fixed fees: each line uses up what is left of the agreed fees
             left = fee_left or 0
-            exp = min(ch, left) if instalments else left
+            exp = min(ch, left)
             if fee_left is not None:
                 fee_left = max(0, fee_left - exp)
             out.append({**l, "charged_h": ch, "expected_h": exp, "gap_h": ch - exp, "sold": None, "left": None, "fee": True,
@@ -144,9 +148,10 @@ def dn_check(dn_lines, promo_lines, dn_date, promo_end, cfg: Cfg, *, prior=None,
             continue
         pl = promo_lines.get(l["sku"])
         sold = pl["sold"] if pl else None
-        left = None if sold is None else max(0, sold - prior.get(l["sku"], 0))
-        part = instalments or prior.get(l["sku"], 0) > 0
+        left = None if sold is None else max(0, sold - prior.get(l["sku"], 0) - used.get(l["sku"], 0))
+        part = instalments or prior.get(l["sku"], 0) > 0 or seen[l["sku"]] > 1
         units = l["units"] if left is None else (min(l["units"], left) if part else left)
+        used[l["sku"]] = used.get(l["sku"], 0) + (min(l["units"], left) if left is not None else l["units"])
         exp = units * pl["support_h"] if pl else 0
         out.append({**l, "charged_h": ch, "expected_h": exp, "gap_h": ch - exp, "sold": sold, "left": left, "fee": False,
                     "billed_before": prior.get(l["sku"], 0),

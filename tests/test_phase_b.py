@@ -178,6 +178,8 @@ def test_second_debit_note_is_checked_against_what_is_left():
     l.save()
     d1 = create_dn("VCDN-T1", p.agreement_no, p.end + timedelta(days=5), [(l.sku, 60, l.support_h)])
     assert evaluate(d1)["lines"][0]["units_ok"]
+    from debitnotes.services import _validate
+    _validate(d1, timezone.now())                      # only validated debit notes count as billed
     d2 = create_dn("VCDN-T2", p.agreement_no, p.end + timedelta(days=6), [(l.sku, 50, l.support_h)])
     ev = evaluate(d2)
     assert ev["lines"][0]["left"] == 40 and not ev["lines"][0]["units_ok"] and ev["status"] == "mismatch"
@@ -194,6 +196,8 @@ def test_fixed_fee_line_checked_against_the_agreed_fee():
     ev = evaluate(dn)
     fee = next(x for x in ev["lines"] if x["fee"])
     assert fee["rate_ok"] and fee["expected_h"] == 500_00
+    from debitnotes.services import _validate
+    _validate(dn, timezone.now())
     dn2 = create_dn("VCDN-T4", p.agreement_no, p.end + timedelta(days=6), [(None, 1, 200_00, "Deal fee")])
     assert not next(x for x in evaluate(dn2)["lines"] if x["fee"])["rate_ok"]      # the fee was already billed
 

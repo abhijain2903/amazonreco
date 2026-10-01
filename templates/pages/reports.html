@@ -1,8 +1,16 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="ph"><div><h1>Reports</h1><p>How each step of the Amazon business ran: orders, shipping, invoicing and cash, promotions. For the weekly review.</p></div>
-<div class="ph-act">{% include "partials/export_btn.html" %}<div class="seg" role="group" aria-label="Period">{% for d in periods %}<a class="{% if days == d %}on{% endif %}" href="?days={{ d }}" style="display:flex;align-items:center;padding:0 11px;height:32px;text-decoration:none;color:inherit">{{ d }} days</a>{% endfor %}</div></div></div>
-{% for s in sections %}<h3 class="sect-h" style="margin:18px 0 10px">{{ s.title }}</h3>
-<div class="kpis">{% for k in s.kpis %}<div class="kpi rep {{ k.tone }}"><span class="kpi-l">{{ k.label }}</span><span class="kpi-v">{{ k.value }}{% if k.unit %}<small>{{ k.unit }}</small>{% endif %}</span><span class="kpi-s">{{ k.sub }}</span></div>{% endfor %}</div>{% endfor %}
-<p class="small faint">Rates count records whose step happened in the period. Targets: green at or above target, amber close, red below.</p>
+<div class="ph"><div><h1>Reports</h1><p>Looking back: how the period went against the one before, week by week, and where problems and money losses came from. The dashboard shows what is open now.</p></div>
+<div class="ph-act">{% include "partials/export_btn.html" %}<div class="seg" role="group" aria-label="Period">{% for d in periods %}<a class="{% if days == d %}on{% endif %}" href="?days={{ d }}&tab={{ tab }}" style="display:flex;align-items:center;padding:0 11px;height:32px;text-decoration:none;color:inherit">{{ d }} days</a>{% endfor %}</div></div></div>
+<p class="small muted" style="margin:-6px 0 12px">{{ r.period.0|fd }} – {{ r.period.1|fd }}, compared with {{ r.prev.0|fd }} – {{ r.prev.1|fd }}. Export gives every tab as sheets in one workbook.</p>
+<div class="tabs" role="tablist">{% for t in tabs %}<a class="tab {% if t.id == tab %}on{% endif %}" href="?tab={{ t.id }}&days={{ days }}">{{ t.label }}</a>{% endfor %}</div>
+<div class="kpis">{% for k in r.kpis %}<div class="kpi rep"><span class="kpi-l">{{ k.label }}</span>
+<span class="kpi-v">{% if k.value is None %}—{% else %}{% if k.unit == 'SAR' %}{{ k.value|floatformat:"0g" }}<small>SAR</small>{% else %}{{ k.value|floatformat:"-1" }}{% if k.unit %}<small>{{ k.unit }}</small>{% endif %}{% endif %}{% endif %}</span>
+<span class="kpi-s">{% if k.delta is not None %}<b class="delta {{ k.tone }}">{% if k.delta > 0 %}▲ +{% elif k.delta < 0 %}▼ {% else %}= {% endif %}{% if k.unit == 'SAR' %}{{ k.delta|floatformat:"0g" }}{% else %}{{ k.delta|floatformat:"-1" }}{% endif %}</b> vs previous{% elif k.prev is None and k.value is not None %}{% endif %}{% if k.note %}<span class="rep-note">{{ k.note }}</span>{% endif %}</span></div>{% endfor %}</div>
+{% if r.trends %}<div class="trends">{% for tr in r.trends %}<div class="card trend"><div class="card-b"><b class="small">{{ tr.title }}</b><span class="small muted"> · last 12 weeks</span>
+<div class="bars">{% for p in tr.points %}<div class="bc" title="Week of {{ p.label }}: {% if p.value is None %}no data{% else %}{{ p.value|floatformat:'-1' }}{% endif %}">{% if p.value is None %}<span class="b nodata"></span>{% else %}<span class="b" style="height:{{ p.h }}%"></span>{% endif %}<i>{% if forloop.first or forloop.last or forloop.counter == 7 %}{{ p.label }}{% endif %}</i></div>{% endfor %}</div></div></div>{% endfor %}</div>{% endif %}
+{% for t in r.tables %}<h3 class="sect-h" style="margin:20px 0 6px">{{ t.title }}</h3>{% if t.note %}<p class="small muted" style="margin:0 0 8px">{{ t.note }}</p>{% endif %}
+{% if t.rows %}<div class="tw"><table class="dt compact"><thead><tr>{% for c in t.cols %}<th class="{% if c.1 != 'text' %}num{% endif %}">{{ c.0 }}</th>{% endfor %}</tr></thead><tbody>
+{% for row in t.rows %}<tr>{% for v in row %}{% with kind=t.cols|idx:forloop.counter0 %}<td class="{% if kind.1 != 'text' %}num{% endif %}">{{ v|cell:kind.1 }}</td>{% endwith %}{% endfor %}</tr>{% endfor %}</tbody></table></div>
+{% else %}<div class="tw"><div class="empty"><span>Nothing in this period.</span></div></div>{% endif %}{% endfor %}
 {% endblock %}

@@ -472,3 +472,11 @@ tr.sel td{background:var(--primary-soft)}
 .owner{display:flex;align-items:center;gap:4px;margin-right:6px;color:var(--muted)}.owner .sel{height:30px;max-width:190px;font-size:12px}
 .aci-owner{font-size:11px;color:var(--muted)}
 .kpi.rep{cursor:default}.kpi.rep.ok .kpi-v{color:var(--ok)}.kpi.rep.warn .kpi-v{color:var(--warn)}.kpi.rep.bad .kpi-v{color:var(--bad)}
+.delta{font-weight:600;margin-right:4px}.delta.ok{color:var(--ok)}.delta.bad{color:var(--bad)}.rep-note{display:block;color:var(--faint);font-size:11px;margin-top:2px}
+.trends{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-bottom:6px}
+.bars{display:grid;grid-template-columns:repeat(12,1fr);gap:4px;height:110px;align-items:end;margin-top:10px}
+.bc{height:100%;display:flex;flex-direction:column;justify-content:flex-end;position:relative}
+.bc .b{display:block;background:var(--primary);border-radius:3px 3px 0 0;min-height:2px}.bc .b.nodata{background:var(--gray-soft);height:2px}
+.bc i{position:absolute;bottom:-17px;left:0;font-size:10px;color:var(--faint);font-style:normal;white-space:nowrap}
+.trend .card-b{padding-bottom:22px}
+aside.drawer.reloading .df button,aside.drawer.reloading .df .btn{pointer-events:none;opacity:.55}

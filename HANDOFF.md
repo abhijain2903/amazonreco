@@ -77,8 +77,10 @@ R12 = global tolerance (SAR 1). BRD worked example used in seed and tests: 180 u
     budgets, batch claims, per-person alerts, assignment + @mentions, Reports page, vendor codes.
   - C: backorders and split shipments (several deliveries/ASNs/slots/invoices per PO, stage "Backorder open"),
     returns (RTV) app with U10 upload.
-- Tests: `pytest` → 244 passed (rules, flows, uploads U1-U10, API, access matrix, matching, defects, phases A–C, smoke).
-  Playwright e2e: 6 passed against a running seeded server.
+- Tests: `pytest` → 255 passed (rules, flows, uploads U1-U10, API, access matrix, matching, defects, phases A–C, review
+  regressions, smoke). Playwright e2e: 17 passed against a running seeded server (`test_ui` + `test_scenarios`, the real-world cases).
+- Reports page: six tabs (summary with period-on-period and money leaked/protected, orders & stock, shipping, cash &
+  deductions, promotions, team speed), 12-week trends, one-workbook export. Demo seed adds realistic history for it.
 - Packaging: Dockerfile (`bin/start.sh`: migrate → optional seed → optional worker → gunicorn/uvicorn on `$PORT`),
   `docker-compose.yml` (db, migrate, web, worker), `render.yaml` one-click demo, `.env.example`.
 

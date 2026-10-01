@@ -58,10 +58,11 @@ def recovery_for(p, inv=None):
     """Is this payment Amazon paying back a disputed deduction? It is when it names the dispute (our case number or
     Amazon's case ID) or pays an invoice whose deduction is in an open dispute, for no more than the disputed amount."""
     cfg = get_cfg()
-    text = norm(f"{p.invoice_ref} {p.reason}")
+    tokens = set(norm(t) for t in re.split(r"[\s,;:/()]+", f"{p.invoice_ref} {p.reason}") if t)
     open_d = Dispute.objects.filter(recovered_in="", po__isnull=False).exclude(status="lost")
     for d in open_d:
-        if norm(d.case_no) in text or (d.amazon_case_id and norm(d.amazon_case_id) in text):
+        ids = {norm(d.case_no)} | ({norm(d.amazon_case_id)} if d.amazon_case_id else set())
+        if any(len(i) >= 6 and i in tokens for i in ids) and p.paid_h <= d.amount_h + cfg.tol_h():
             return d
     if inv:
         refs = Payment.objects.filter(invoice=inv).exclude(pk=p.pk).values_list("payment_no", flat=True)
@@ -78,6 +79,7 @@ def _apply_recovery(p, d, at=None):
     p.save()
     part = p.paid_h < d.amount_h
     d.status, d.recovered_h, d.recovered_in = "won", min(p.paid_h, d.amount_h), p.payment_no
+    d.closed_at = d.closed_at or p.remit_date
     d.bump()
     d.save()
     Payment.objects.filter(payment_no=d.ref).update(status="recovered")
@@ -112,6 +114,12 @@ def match_payment(p, at=None, cfg=None):
         p.status, p.deduction_h = "matched", 0
         po = inv.po
         p.save()
+        # An earlier part payment that looked short: the invoice is now covered, so it was an instalment
+        for q in Payment.objects.filter(invoice=inv, status="short").exclude(pk=p.pk):
+            q.status, q.deduction_h = "matched", 0
+            q.save(update_fields=["status", "deduction_h", "updated_at"])
+            audit("po", po.po_no, f"Payment {q.payment_no} was a part payment; invoice {inv.invoice_no} is now paid in full",
+                  name="Auto-match", system=True, action="payment", at=at)
         settle_po(po, p.remit_date)
         audit("po", po.po_no, f"Payment {p.payment_no} matched: {fmt_sar(p.paid_h)}", name="Auto-match", system=True,
               action="payment", at=at)
@@ -176,7 +184,7 @@ def split_payment(user, payment_no, invoice_nos, version=None, note=""):
     remaining, parts = p.paid_h, []
     for k, inv in enumerate(invs):
         already = Payment.objects.filter(invoice=inv, status__in=COUNTED).aggregate(s=Sum("paid_h"))["s"] or 0
-        amt = remaining if k == len(invs) - 1 else min(remaining, inv.total_h - already)
+        amt = remaining if k == len(invs) - 1 else min(remaining, inv.net_due_h - already)
         remaining -= amt
         if k == 0:
             part = p
@@ -280,6 +288,8 @@ def set_dispute_status(user, case_no, status, recovered_h=None, case_id=None):
             raise CommandError(f"The amount recovered must be above 0 and at most {fmt_sar(d.amount_h)}.")
         d.recovered_h = recovered_h
     d.status = status
+    if status in ("won", "lost"):
+        d.closed_at = timezone.now()
     d.bump()
     d.save()
     part = status == "won" and d.recovered_h < d.amount_h

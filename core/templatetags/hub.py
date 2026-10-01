@@ -264,3 +264,24 @@ def sum_paid(payments):
 @register.filter
 def sum_qty(lines):
     return sum(l.qty for l in lines)
+
+
+@register.filter
+def cell(v, kind):
+    """A report table cell by column kind: sar (halalas), pct, num, date, text."""
+    if v is None or v == "":
+        return "—"
+    if kind == "sar":
+        return f"{round(v / 100):,}"
+    if kind == "pct":
+        return f"{v:g}%"
+    if kind == "num":
+        return f"{int(v):,}" if float(v).is_integer() else f"{v:,.1f}"
+    if kind == "date":
+        return f"{v:%d %b}"
+    return v
+
+
+@register.filter
+def idx(seq, i):
+    return seq[i]
