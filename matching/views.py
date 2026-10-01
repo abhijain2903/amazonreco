@@ -56,7 +56,7 @@ def review(request, kind, source):
         s = svc.refresh_deduction(get_object_or_404(Payment, payment_no=source), use_ai=use_ai)
         return htmx.done(request, (f"AI ({s.ai_model}): " + s.ai_rationale) if s.method == "ai" else "Suggestion refreshed", "info")
     obj = _source_obj(kind, source)
-    rows = svc.refresh(kind, obj, use_ai=use_ai)
+    rows = svc.refresh(kind, obj, use_ai=use_ai, ask_always=use_ai)
     picked = next((r for r in rows if r.method == "ai"), None)
     if use_ai:
         msg = (f"AI ({picked.ai_model}) suggests {picked.label.split(' · ')[0]}: {picked.ai_rationale}" if picked else

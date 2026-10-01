@@ -486,3 +486,16 @@ def test_openai_refusal_and_rejected_key(fake_openai, as_user):
     fake_openai(status=401)
     t = toast(as_user("admin").post("/matching/settings/ai/test/"))
     assert t["tone"] == "bad" and "rejected" in t["msg"] and "OpenAI dashboard" in t["msg"]
+
+
+def test_ask_ai_reviews_even_a_confident_match(fake_openai, as_user):
+    """A person clicking Ask AI always gets the AI's view, even when the rules already score the match 96."""
+    fake = fake_openai({"choice": 0, "confidence": 95, "rationale": "Digits 31/13 swapped; the amount and date fit only this invoice."})
+    connect(as_user, provider="openai", api_key=OPENAI_KEY, model="gpt-x")
+    p = typo_payment()
+    t = toast(as_user("priya").post(f"/matching/review/pay_inv/{p.payment_no}/", {"ai": "1"}))
+    assert len(fake.requests) == 1 and "suggests" in t["msg"] and "swapped" in t["msg"]
+    top = MatchSuggestion.objects.filter(kind="pay_inv", source=p.payment_no, status="pending").order_by("-score").first()
+    assert top.method == "ai" and top.score >= 90
+    ms.refresh("pay_inv", p, use_ai=True)                 # background review: confident match, AI not asked again
+    assert len(fake.requests) == 1

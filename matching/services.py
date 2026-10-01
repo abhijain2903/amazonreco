@@ -50,8 +50,11 @@ def _record(kind, obj):
 
 
 @transaction.atomic
-def refresh(kind, obj, use_ai=False):
-    """Recompute suggestions for one record. Pairs someone rejected are never proposed again."""
+def refresh(kind, obj, use_ai=False, ask_always=False):
+    """Recompute suggestions for one record. Pairs someone rejected are never proposed again.
+
+    use_ai: let the AI review close calls (background review after an import). ask_always: a person clicked
+    Ask AI, so the AI reviews the list even when the rules are already confident."""
     source = obj.payment_no if kind in ("pay_inv", "pay_dn") else obj.dn_no
     cfg = MatchSettings.get()
     rejected = _rejected(kind, source)
@@ -59,7 +62,8 @@ def refresh(kind, obj, use_ai=False):
     MatchSuggestion.objects.filter(kind=kind, source=source, status="pending").update(status="superseded")
     rows = [MatchSuggestion.objects.create(kind=kind, source=source, targets=c["targets"], label=c["label"][:200], score=c["score"],
                                            reasons=c["reasons"]) for c in cands]
-    if use_ai and rows and ai.available() and (rows[0].score < 80 or (len(rows) > 1 and rows[0].score - rows[1].score < AI_CLOSE_CALL)):
+    close_call = rows and (rows[0].score < 80 or (len(rows) > 1 and rows[0].score - rows[1].score < AI_CLOSE_CALL))
+    if use_ai and rows and ai.available() and (ask_always or close_call):
         pick = ai.choose(KIND_LABEL[kind], _record(kind, obj), [dict(label=c["label"], score=c["score"], reasons=c["reasons"]) for c in cands],
                          _history(kind))
         if pick and pick["choice"] >= 0:
