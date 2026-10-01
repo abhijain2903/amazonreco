@@ -39,7 +39,7 @@ TYPES = OrderedDict([
         ("payment_no", 1, ["payment", "paymentnumber", "remittance", "paymentid"]), ("remit_date", 1, ["date", "paymentdate"]),
         ("invoice_no", 1, ["invoice", "invoicenumber"]), ("amount_paid_sar", 1, ["amountpaid", "paid", "amount"]),
         ("deduction_sar", 1, ["deduction", "deductions"]), ("deduction_reason", 0, ["reason"])])),
-    ("U7", dict(name="Promotions (bulk)", src="Product team Excel", go="/promos/?tab=pre", cols=[
+    ("U7", dict(name="Promotions (bulk)", src="Product team Excel", go="/promos/?tab=pre", perm="promo", cols=[
         ("promo_name", 1, ["name", "promotion"]), ("category", 1, ["cat"]), ("start_date", 1, ["start"]), ("end_date", 1, ["end"]),
         ("sku_code", 1, ["sku", "model", "asin"]), ("support_per_unit_sar", 1, ["support", "supportperunit", "fundingperunit"]),
         ("expected_units", 1, ["units", "expected"])])),
@@ -47,7 +47,7 @@ TYPES = OrderedDict([
         ("dn_no", 1, ["dn", "debitnote", "debitnoteno"]), ("agreement_no", 1, ["agreement", "agreementnumber", "agreementid"]),
         ("dn_date", 1, ["date"]), ("sku_code", 1, ["sku", "asin", "model"]), ("units", 1, ["qty", "quantity"]),
         ("rate_sar", 1, ["rate", "amountperunit"]), ("amount_sar", 0, ["amount", "total"])])),
-    ("U9", dict(name="Credit notes", src="Finance / SAP", go="/claims/?tab=closed", cols=[
+    ("U9", dict(name="Credit notes", src="Finance / SAP", go="/claims/?tab=closed", perm="cn", cols=[
         ("cn_no", 1, ["cn", "creditnote"]), ("claim_no", 1, ["claim"]), ("cn_date", 1, ["date"]), ("amount_sar", 1, ["amount", "value"])])),
 ])
 

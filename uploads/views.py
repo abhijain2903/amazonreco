@@ -21,7 +21,8 @@ def _types():
     out = []
     for tid, t in types.TYPES.items():
         last = UploadBatch.objects.filter(upload_type=tid, status="committed").first()
-        out.append(dict(id=tid, name=t["name"], src=t["src"], required=sum(1 for c in t["cols"] if c[1]), last=last))
+        out.append(dict(id=tid, name=t["name"], src=t["src"], required=sum(1 for c in t["cols"] if c[1]), last=last,
+                        perm=t.get("perm", "upload")))
     return out
 
 
@@ -61,9 +62,10 @@ def new(request):
     tid = request.GET.get("type") or request.POST.get("type")
     if request.method == "GET":
         return _wiz(request, 2 if tid in types.TYPES else 1, tid if tid in types.TYPES else None)
-    require(request.user, "upload")
     if tid not in types.TYPES:
+        require(request.user, "upload")
         raise CommandError("Choose what you are uploading.")
+    svc.require_type(request.user, tid)  # before a sample file is built
     try:
         if request.POST.get("sample"):
             name, data = svc.sample(tid)

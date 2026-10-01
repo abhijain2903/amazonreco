@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="ph"><div><h1>Promotions</h1><p>The promotion tracker: from the product team's request to the credit note. Replaces the Excel tracker.</p></div>
-<div class="ph-act"><button class="btn" hx-get="/uploads/new/?type=U7" hx-target="#modal" {% perm 'upload' %}>{% icon 'upload' %}<span>Upload promotions</span></button>
+<div class="ph-act"><button class="btn" hx-get="/uploads/new/?type=U7" hx-target="#modal" {% perm 'promo' %}>{% icon 'upload' %}<span>Upload promotions</span></button>
 <button class="btn pri" hx-get="/promos/new/" hx-target="#modal" {% perm 'promo' %}>{% icon 'plus' %}<span>New promotion</span></button></div></div>
 <div class="kpis">{% for k in kpis %}<a class="kpi {% if k.alert %}alert{% endif %}" href="{{ k.url }}"><span class="kpi-l">{{ k.l }}</span><span class="kpi-v">{{ k.v }}</span><span class="kpi-s">{{ k.s }}</span></a>{% endfor %}</div>
 {% if view != 'board' %}<div class="tabs" role="tablist">{% for t in tabs %}<a class="tab {% if t.id == tab %}on{% endif %}" href="?tab={{ t.id }}&view={{ view }}&cat={{ cat }}&q={{ q|urlencode }}">{{ t.label }}<span class="ct">{{ t.count }}</span></a>{% endfor %}</div>{% endif %}

@@ -133,6 +133,7 @@ def reject_promotion(user, ref, version=None):
 @transaction.atomic
 def pull_sold_units(user, ref):
     """Simulated pull from the Amazon sales report."""
+    require(user, "promo")
     p = get_promo(ref, lock=True)
     if not settings.DEMO_SIMULATIONS:
         raise CommandError("The Amazon sales report connector is not live yet.")

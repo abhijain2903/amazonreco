@@ -69,10 +69,18 @@ def missing_required(batch):
 
 
 @transaction.atomic
-def create_batch(user, tid, filename, data: bytes):
+def require_type(user, tid):
+    """Uploading needs the upload permission, plus the permission of what the upload does: bulk promotions (U7)
+    create promotions, credit notes (U9) close claims."""
     require(user, "upload")
+    if perm := types.TYPES.get(tid, {}).get("perm"):
+        require(user, perm)
+
+
+def create_batch(user, tid, filename, data: bytes):
     if tid not in types.TYPES:
         raise CommandError("Unknown upload type.")
+    require_type(user, tid)
     if len(data) > settings.HUB_MAX_UPLOAD_BYTES:
         raise CommandError("The file is larger than 25 MB.")
     rows = parse(filename, data)
@@ -103,7 +111,7 @@ def row_dicts(batch):
 
 @transaction.atomic
 def build_preview(user, batch):
-    require(user, "upload")
+    require_type(user, batch.upload_type)
     if missing_required(batch):
         raise CommandError("Map every required column first.")
     cfg = get_cfg()
@@ -125,8 +133,8 @@ def build_preview(user, batch):
 
 @transaction.atomic
 def commit(user, batch_id):
-    require(user, "upload")
     batch = UploadBatch.objects.select_for_update().get(pk=batch_id)
+    require_type(user, batch.upload_type)
     if batch.status != "preview":
         raise CommandError("This upload was already imported.")
     ok = [r.data for r in batch.rows.all() if not r.errors]
