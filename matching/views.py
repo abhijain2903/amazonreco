@@ -74,6 +74,26 @@ def _source_obj(kind, source):
 
 
 @require_POST
+def ai_connect(request):
+    cfg = svc.connect_ai(request.user, request.POST.get("provider", "off"), request.POST.get("api_key", ""))
+    msg = {"off": "Claude disconnected", "anthropic": "Claude connected via the Anthropic API",
+           "bedrock": "Claude set to Amazon Bedrock"}[cfg.ai_provider]
+    return htmx.done(request, msg + ". Use Test connection to check it.", "ok" if cfg.ai_provider != "off" else "info", drawer=False)
+
+
+@require_POST
+def ai_remove_key(request):
+    svc.remove_ai_key(request.user)
+    return htmx.done(request, "API key removed", "info", drawer=False)
+
+
+@require_POST
+def ai_test(request):
+    ok, msg = svc.test_ai(request.user)
+    return htmx.done(request, msg, "ok" if ok else "bad", refresh=False, drawer=False)
+
+
+@require_POST
 def settings_save(request):
     f = request.POST.get("field")
     v = request.POST.get("value")

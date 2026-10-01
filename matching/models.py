@@ -40,6 +40,14 @@ class MatchSettings(Base):
     auto_threshold = models.PositiveSmallIntegerField(default=95)
     show_threshold = models.PositiveSmallIntegerField(default=50)
     ai_enabled = models.BooleanField(default=True)
+    # Connection set in the app (used only when the server's HUB_AI_PROVIDER is "off"). The key is write-only:
+    # stored encrypted (matching/secrets.py), shown back only as its last 4 characters.
+    ai_provider = models.CharField(max_length=10, default="off",
+                                   choices=[("off", "Not connected"), ("anthropic", "Anthropic API"), ("bedrock", "Amazon Bedrock")])
+    api_key_enc = models.TextField(blank=True)
+    api_key_hint = models.CharField(max_length=8, blank=True)
+    api_key_set_at = models.DateTimeField(null=True, blank=True)
+    api_key_set_by = models.CharField(max_length=120, blank=True)
 
     @classmethod
     def get(cls):

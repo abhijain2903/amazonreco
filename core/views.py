@@ -366,8 +366,9 @@ def _matching_ctx():
             rej = by.get((k, m, "rejected"), 0)
             if acc + rej:
                 stats.append(dict(kind=label, method=ml, accepted=acc, rejected=rej, rate=round(acc / (acc + rej) * 100)))
-    return dict(mcfg=MatchSettings.get(), ai_provider=settings.AI_PROVIDER, ai_model=settings.AI_MODEL, ai_region=settings.AI_REGION,
-                mstats=stats, pending_n=MatchSuggestion.objects.filter(status="pending").count())
+    from matching.ai import connection
+    conn = {k: v for k, v in connection().items() if k != "key"}  # the key itself never reaches a template
+    return dict(mcfg=MatchSettings.get(), conn=conn, mstats=stats, pending_n=MatchSuggestion.objects.filter(status="pending").count())
 
 
 def _open_prices(skus):

@@ -188,7 +188,7 @@ def test_drawers_show_suggestions(as_user):
 def test_matching_settings(as_user):
     assert toast(as_user("faisal").get("/settings/?tab=matching"))["tone"] == "bad"
     r = as_user("admin").get("/settings/?tab=matching")
-    assert b"AI assistance is not connected" in r.content
+    assert b"Suggestions come from the matching rules only" in r.content
     assert toast(as_user("admin").post("/matching/settings/", {"field": "show_threshold", "value": "65"}))["tone"] == "ok"
     assert MatchSettings.get().show_threshold == 65
     assert toast(as_user("admin").post("/matching/settings/", {"field": "auto_threshold", "value": "50"}))["tone"] == "bad"
@@ -209,8 +209,8 @@ def test_did_you_mean_on_imports():
 class FakeClaude:
     """Answers POST /v1/messages with a canned structured reply and records what it was sent."""
 
-    def __init__(self, answer, stop_reason="end_turn"):
-        self.answer, self.stop_reason, self.requests = answer, stop_reason, []
+    def __init__(self, answer, stop_reason="end_turn", status=200):
+        self.answer, self.stop_reason, self.status, self.requests = answer, stop_reason, status, []
         outer = self
 
         class H(BaseHTTPRequestHandler):
@@ -220,7 +220,9 @@ class FakeClaude:
                 out = json.dumps({"id": "msg_test", "type": "message", "role": "assistant", "model": body["model"],
                                   "content": [{"type": "text", "text": json.dumps(outer.answer)}], "stop_reason": outer.stop_reason,
                                   "stop_sequence": None, "usage": {"input_tokens": 10, "output_tokens": 5}}).encode()
-                self.send_response(200)
+                if outer.status != 200:
+                    out = json.dumps({"type": "error", "error": {"type": "authentication_error", "message": "invalid x-api-key"}}).encode()
+                self.send_response(outer.status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(out)))
                 self.end_headers()
@@ -292,10 +294,98 @@ def test_refusal_or_outage_keeps_the_rules_result(claude, settings, monkeypatch)
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://127.0.0.1:9")   # nothing listening
     monkeypatch.setattr(ai, "_client", None)
     import anthropic
-    monkeypatch.setattr(ai, "_get_client", lambda: anthropic.Anthropic(max_retries=0, timeout=2))
+    monkeypatch.setattr(ai, "_get_client", lambda conn=None: anthropic.Anthropic(max_retries=0, timeout=2))
     assert ms.refresh_deduction(p, use_ai=True).method == "rules"
 
 
 def test_ask_claude_needs_ai_switched_on(as_user):
     r = as_user("priya").post(f"/matching/review/pay_inv/{typo_payment().payment_no}/", {"ai": "1"})
     assert toast(r)["tone"] == "bad" and "not switched on" in toast(r)["msg"]
+
+
+# ---------- connecting Claude from Settings → Matching ----------
+KEY = "sk-ant-api03-" + "x" * 40 + "AbCd"
+
+
+def connect(as_user, **data):
+    return as_user("admin").post("/matching/settings/ai/", data)
+
+
+def test_admin_connects_claude_with_a_key(as_user):
+    r = connect(as_user, provider="anthropic", api_key=KEY)
+    assert toast(r)["tone"] == "ok"
+    cfg = MatchSettings.get()
+    assert cfg.ai_provider == "anthropic" and cfg.api_key_hint == "AbCd" and KEY not in cfg.api_key_enc   # encrypted at rest
+    assert ai.connection()["key"] == KEY and ai.available()
+    page = as_user("admin").get("/settings/?tab=matching").content
+    assert KEY.encode() not in page and b"AbCd" in page                                                  # write-only
+    from core.models import AuditEvent
+    logged = " ".join(e.text + json.dumps(e.after or {}) + json.dumps(e.before or {}) for e in AuditEvent.objects.filter(entity="settings"))
+    assert "configure_ai" in AuditEvent.objects.filter(entity="settings").values_list("action", flat=True) and KEY not in logged
+
+
+def test_key_rules(as_user):
+    assert toast(as_user("faisal").post("/matching/settings/ai/", {"provider": "anthropic", "api_key": KEY}))["tone"] == "bad"
+    assert toast(connect(as_user, provider="anthropic", api_key="hello"))["tone"] == "bad"      # not a Claude key
+    assert toast(connect(as_user, provider="anthropic"))["tone"] == "bad"                       # no key saved yet
+    connect(as_user, provider="anthropic", api_key=KEY)
+    connect(as_user, provider="anthropic")                                                      # empty field keeps the key
+    assert ai.connection()["key"] == KEY
+    assert toast(as_user("faisal").post("/matching/settings/ai/remove-key/"))["tone"] == "bad"
+    as_user("admin").post("/matching/settings/ai/remove-key/")
+    assert not ai.available() and MatchSettings.get().api_key_enc == "" and MatchSettings.get().ai_provider == "off"
+
+
+def test_server_setting_wins(settings, as_user):
+    connect(as_user, provider="anthropic", api_key=KEY)
+    settings.AI_PROVIDER = "bedrock"
+    c = ai.connection()
+    assert c["source"] == "server" and c["provider"] == "bedrock" and c["key"] is None and c["model"] == "anthropic.claude-opus-5"
+    assert b"Set on the server" in as_user("admin").get("/settings/?tab=matching").content
+
+
+def test_saved_key_unreadable_after_server_key_change(settings, as_user):
+    connect(as_user, provider="anthropic", api_key=KEY)
+    settings.SECRETS_KEY = "rotated-server-key"
+    c = ai.connection()
+    assert not c["ready"] and "enter it again" in c["problem"] and not ai.available()
+
+
+@pytest.fixture
+def fake_claude(monkeypatch):
+    made = []
+
+    def start(answer=None, status=200):
+        fake = FakeClaude(answer or {"choice": 0, "confidence": 80, "rationale": "ok"}, status=status)
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", fake.url)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setattr(ai, "_client", None)
+        made.append(fake)
+        return fake
+    yield start
+    for f in made:
+        f.close()
+    ai._client = None
+
+
+def test_test_connection_uses_the_saved_key(fake_claude, as_user):
+    fake = fake_claude()
+    connect(as_user, provider="anthropic", api_key=KEY)
+    r = as_user("admin").post("/matching/settings/ai/test/")
+    assert toast(r)["tone"] == "ok" and "Connected to Claude" in toast(r)["msg"]
+    headers = {k.lower(): v for k, v in fake.requests[-1]["headers"].items()}
+    assert headers["x-api-key"] == KEY
+    p = typo_payment()                                   # real suggestion calls use the same key
+    ms.AI_CLOSE_CALL = 100
+    try:
+        ms.refresh("pay_inv", p, use_ai=True)
+    finally:
+        ms.AI_CLOSE_CALL = 10
+    assert {k.lower(): v for k, v in fake.requests[-1]["headers"].items()}["x-api-key"] == KEY
+
+
+def test_test_connection_explains_a_rejected_key(fake_claude, as_user):
+    fake_claude(status=401)
+    connect(as_user, provider="anthropic", api_key=KEY)
+    t = toast(as_user("admin").post("/matching/settings/ai/test/"))
+    assert t["tone"] == "bad" and "rejected" in t["msg"]

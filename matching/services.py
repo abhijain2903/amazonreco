@@ -181,6 +181,58 @@ def _audit_decision(user, s, what):
 
 
 @transaction.atomic
+def connect_ai(user, provider, api_key=""):
+    """Connect Claude from Settings → Matching. The key is write-only: encrypted at rest, never shown back or
+    written to the audit trail (only its last 4 characters are kept for display)."""
+    import re
+
+    from .secrets import encrypt
+    require(user, "settings")
+    if provider not in ("off", "anthropic", "bedrock"):
+        raise CommandError("Pick Anthropic API, Amazon Bedrock or Not connected.")
+    cfg = MatchSettings.get()
+    before = dict(provider=cfg.ai_provider, key=cfg.api_key_hint and f"…{cfg.api_key_hint}")
+    api_key = (api_key or "").strip()
+    if api_key:
+        if not re.fullmatch(r"sk-ant-[A-Za-z0-9_\-]{20,}", api_key):
+            raise CommandError("That does not look like a Claude API key. It starts with sk-ant- (Claude Console → API keys).")
+        cfg.api_key_enc, cfg.api_key_hint = encrypt(api_key), api_key[-4:]
+        cfg.api_key_set_at, cfg.api_key_set_by = timezone.now(), actor_name(user)
+    if provider == "anthropic" and not cfg.api_key_enc:
+        raise CommandError("Enter the API key to connect the Anthropic API.")
+    cfg.ai_provider = provider
+    cfg.bump()
+    cfg.save()
+    audit("settings", "matching", f"Claude connection set to {dict(cfg._meta.get_field('ai_provider').choices)[provider]}"
+          + (f" with a new API key (…{cfg.api_key_hint})" if api_key else ""), user, action="configure_ai",
+          before=before, after=dict(provider=provider, key=cfg.api_key_hint and f"…{cfg.api_key_hint}"))
+    return cfg
+
+
+@transaction.atomic
+def remove_ai_key(user):
+    require(user, "settings")
+    cfg = MatchSettings.get()
+    hint = cfg.api_key_hint
+    cfg.api_key_enc = cfg.api_key_hint = cfg.api_key_set_by = ""
+    cfg.api_key_set_at = None
+    if cfg.ai_provider == "anthropic":
+        cfg.ai_provider = "off"
+    cfg.bump()
+    cfg.save()
+    audit("settings", "matching", f"Claude API key removed (…{hint})" if hint else "Claude API key removed", user, action="configure_ai")
+    return cfg
+
+
+def test_ai(user):
+    from . import ai
+    require(user, "settings")
+    ok, msg = ai.test_connection()
+    audit("settings", "matching", f"Claude connection tested: {'OK' if ok else 'failed'}. {msg}", user, action="test_ai")
+    return ok, msg
+
+
+@transaction.atomic
 def update_settings(user, auto_apply=None, auto_threshold=None, show_threshold=None, ai_enabled=None):
     require(user, "settings")
     cfg = MatchSettings.get()

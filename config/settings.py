@@ -36,6 +36,9 @@ DJANGO_ADMIN = env_bool("HUB_DJANGO_ADMIN", True)
 AI_PROVIDER = env("HUB_AI_PROVIDER", "off").lower()
 AI_MODEL = env("HUB_AI_MODEL", "anthropic.claude-opus-5" if AI_PROVIDER == "bedrock" else "claude-opus-5")
 AI_REGION = env("HUB_AI_REGION", env("AWS_REGION", "ap-south-1"))
+# When HUB_AI_PROVIDER is "off", an admin may connect Claude in Settings → Matching instead; the API key is then
+# stored encrypted with this key (falls back to a key derived from DJANGO_SECRET_KEY).
+SECRETS_KEY = env("HUB_SECRETS_KEY", "")
 
 INSTALLED_APPS = [
     "django.contrib.admin",
