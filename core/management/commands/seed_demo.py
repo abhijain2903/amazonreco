@@ -64,12 +64,13 @@ class Command(BaseCommand):
             self.payments()
             self.promos()
             self.notices()
+            self.messy()
         self.stdout.write(self.style.SUCCESS("Example data loaded."))
 
     # ---------- helpers ----------
     def reset(self):
         labels = ["core", "rules", "catalog", "orders", "fulfilment", "billing", "payments", "promotions", "debitnotes", "claims",
-                  "uploads", "integrations"]
+                  "uploads", "integrations", "matching"]
         tables = [m._meta.db_table for l in labels for m in apps.get_app_config(l).get_models()]
         tables += [User._meta.db_table, User.groups.through._meta.db_table, User.user_permissions.through._meta.db_table]
         with connection.cursor() as c:
@@ -357,6 +358,48 @@ class Command(BaseCommand):
         self.mk_promo(12, 8, "approved", occ="Mega deals week"); self.mk_promo(55, 10, "approved", occ="White Friday", cat="TV")
         self.mk_promo(20, 7, "submitted", occ="Mega deals week", cat="PA"); self.mk_promo(55, 10, "submitted", occ="White Friday", cat="DI")
         self.mk_promo(60, 10, "draft", occ="White Friday", cat="HAV")
+
+    def messy(self):
+        """Real-world reconciliation cases for the matching suggestions. Runs last and draws no random numbers, so the
+        rest of the example data (and the demo guide) is unchanged."""
+        from billing.models import Invoice
+        from debitnotes.models import DebitNote
+        from matching import services as ms
+        from orders.models import PurchaseOrder
+        from payments.models import Payment
+        from payments.services import import_payment
+        taken = {x for p in Payment.objects.all() for x in (p.invoice_id and p.invoice.invoice_no, p.invoice_ref, p.hint) if x}
+        inv = sorted([p.invoice for p in PurchaseOrder.objects.filter(stage="invoiced").select_related("invoice")
+                      if p.invoice.invoice_no not in taken], key=lambda i: i.invoice_date)
+        # 1. One remittance line paying two invoices
+        a, b = inv[0], inv[1]
+        import_payment(f"RMT-{next_number('payment', 9102200)}", self.t(-1, -2), "MULTIPLE INVOICES", a.total_h + b.total_h,
+                       at=self.t(-1, -2))
+        # 2. Right amount, invoice number mistyped by Amazon (two digits swapped, different punctuation)
+        c = inv[2]
+        no = c.invoice_no
+        typo = no[:-2] + no[-1] + no[-2] if no[-1] != no[-2] else no[:-3] + no[-2] + no[-3] + no[-1]
+        typo = typo.replace("MEI-", "MEI/").replace("-", "/")
+        if not Invoice.objects.filter(invoice_no=typo).exists():
+            import_payment(f"RMT-{next_number('payment', 9102200)}", self.t(-1, -1), typo, c.total_h, at=self.t(-1, -1))
+        # 3. Amazon collects a validated promotion debit note by deducting it from a payment
+        d = inv[3]
+        dn = min((x for x in DebitNote.objects.filter(validated=True, disputed_h=0) if 0 < x.approved_h < d.total_h // 2),
+                 key=lambda x: x.approved_h, default=None)
+        if dn:
+            import_payment(f"RMT-{next_number('payment', 9102200)}", self.t(0, -3), d.invoice_no, d.total_h - dn.approved_h, dn.approved_h,
+                           f"Promotional allowance - agreement {dn.agreement_no}", at=self.t(0, -3))
+        # Suggestions ready when the demo opens (rules only; Claude runs on request)
+        for p in Payment.objects.filter(status__in=["unmatched", "short"]):
+            if p.status == "unmatched":
+                ms.refresh("pay_inv", p)
+            else:
+                ms.refresh_deduction(p)
+                ms.refresh("pay_dn", p)
+        from debitnotes.services import evaluate
+        for x in DebitNote.objects.filter(validated=False):
+            if evaluate(x)["status"] == "unlinked":
+                ms.refresh("dn_promo", x)
 
     def notices(self):
         from orders.models import PurchaseOrder

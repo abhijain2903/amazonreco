@@ -10,11 +10,12 @@
 <div class="tw"><table class="dt compact"><thead><tr><th>Model</th><th class="num">Units</th><th class="num">Rate</th><th class="num">SAR</th></tr></thead><tbody>
 {% for l in ev.lines %}<tr><td><b style="font-weight:500">{{ l.sku_obj.model_no }}</b><div class="small muted mono">{{ l.sku_obj.sku_code }}</div></td><td class="num">{{ l.units|num }}</td><td class="num">{{ l.rate_h|n2 }}</td><td class="num">{{ l.charged_h|n }}</td></tr>{% endfor %}</tbody></table></div>
 {% if not dn.validated %}
-<form id="link-form"><div class="field"><label for="link-sel">Link to promotion</label>
-<select class="sel" id="link-sel" name="ref" {% if not caps.dn %}disabled{% endif %}>{% for c in cands %}<option value="{{ c.p.mecl_ref }}">{% if forloop.first and c.m %}Likely match · {% endif %}{{ c.p.mecl_ref }} · agreement {{ c.p.agreement_no }} · {{ c.p.name }}</option>{% empty %}<option value="">No promotion is waiting for a debit note</option>{% endfor %}</select>
-<span class="help">Promotions waiting for a debit note, best match first (same models, closest agreement #).</span></div></form>
+{% include "partials/suggestions.html" %}
+<form id="link-form"><div class="field"><label for="link-sel">Or link by hand</label>
+<select class="sel" id="link-sel" name="ref" {% if not caps.dn %}disabled{% endif %}>{% for c in cands %}<option value="{{ c.p.mecl_ref }}">{{ c.p.mecl_ref }} · agreement {{ c.p.agreement_no }} · {{ c.p.name }}</option>{% empty %}<option value="">No promotion is waiting for a debit note</option>{% endfor %}</select>
+<span class="help">Promotions waiting for a debit note.</span></div></form>
 {% endif %}
 <h3 class="sect-h">Timeline</h3>{% include "partials/timeline.html" %}
 {% endblock %}
 {% block hint %}{% if not dn.validated %}Linking corrects the agreement # on the debit note and runs the R10 check.{% endif %}{% endblock %}
-{% block foot %}{% if not dn.validated %}<button class="btn pri" hx-post="/dns/{{ dn.dn_no }}/link/" hx-include="#link-form" hx-vals='{"version": "{{ dn.version }}"}' hx-swap="none" {% perm 'dn' %} {% if not cands %}disabled{% endif %}>{% icon 'link' %}<span>Link debit note</span></button>{% endif %}{% endblock %}
+{% block foot %}{% if not dn.validated %}<button class="btn" hx-post="/dns/{{ dn.dn_no }}/link/" hx-include="#link-form" hx-vals='{"version": "{{ dn.version }}"}' hx-swap="none" {% perm 'dn' %} {% if not cands %}disabled{% endif %}>{% icon 'link' %}<span>Link debit note</span></button>{% endif %}{% endblock %}

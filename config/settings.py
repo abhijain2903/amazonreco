@@ -31,6 +31,11 @@ DEV_LOGIN = env_bool("HUB_DEV_LOGIN", DEBUG)
 DEMO_PASSWORD = env("HUB_DEMO_PASSWORD", "")
 # Django admin at /admin/. Switch off on hosts shown to clients; admin work is then done from the server.
 DJANGO_ADMIN = env_bool("HUB_DJANGO_ADMIN", True)
+# AI assistance for reconciliation matching (matching/ai.py). "off" = rules-based suggestions only.
+# "bedrock" uses the server's AWS credentials (instance role) and keeps data in AWS; "anthropic" needs ANTHROPIC_API_KEY.
+AI_PROVIDER = env("HUB_AI_PROVIDER", "off").lower()
+AI_MODEL = env("HUB_AI_MODEL", "anthropic.claude-opus-5" if AI_PROVIDER == "bedrock" else "claude-opus-5")
+AI_REGION = env("HUB_AI_REGION", env("AWS_REGION", "ap-south-1"))
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -57,6 +62,7 @@ INSTALLED_APPS = [
     "claims",
     "uploads",
     "integrations",
+    "matching",
 ]
 
 MIDDLEWARE = [

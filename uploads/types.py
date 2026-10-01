@@ -100,6 +100,12 @@ def cat_of(v):
 
 
 # ---------- validation ----------
+def _did_you_mean_sku(value):
+    from matching.matchers import closest_sku
+    hit = closest_sku(value)
+    return f". Did you mean {hit}?" if hit else ""
+
+
 def validate(tid, o, ctx, cfg):
     """Return (errors, warnings) for one row dict."""
     e, w = [], []
@@ -126,14 +132,14 @@ def validate(tid, o, ctx, cfg):
     elif tid == "U2":
         s = sk()
         if not s:
-            e.append(f'SKU "{o["sku_code"]}" is not in the SKU master')
+            e.append(f'SKU "{o["sku_code"]}" is not in the SKU master' + _did_you_mean_sku(o["sku_code"]))
         elif num(o["agreed_cost_sar"]) <= 0:
             e.append("Cost must be above 0")
         elif s.cost_h and abs(s.cost_h - to_h(o["agreed_cost_sar"])) > 0:
             w.append(f"Cost changes from {s.cost_h / 100:,.2f} to {num(o['agreed_cost_sar']):,.2f}")
     elif tid == "U3":
         if not sk():
-            e.append(f'SKU "{o["sku_code"]}" is not in the SKU master')
+            e.append(f'SKU "{o["sku_code"]}" is not in the SKU master' + _did_you_mean_sku(o["sku_code"]))
         elif num(o["free_stock"]) < 0:
             e.append("Stock cannot be negative")
     elif tid == "U4":
@@ -141,7 +147,7 @@ def validate(tid, o, ctx, cfg):
         s = resolve_sku(o["asin"]) or resolve_sku(o.get("model_no"))
         exists = PurchaseOrder.objects.filter(po_no=o["po_no"]).exists()
         if not s:
-            e.append(f"ASIN {o['asin']} is not in the SKU master. Add it with U1 first")
+            e.append(f"ASIN {o['asin']} is not in the SKU master" + (_did_you_mean_sku(o.get("model_no") or o["asin"]) or ". Add it with U1 first"))
         if exists:
             w.append("PO already imported. Row will be skipped")
         # Master data (SKUs, FCs) is never created as a side effect of a transaction import: a typo in a
@@ -194,19 +200,50 @@ def validate(tid, o, ctx, cfg):
         if DebitNote.objects.filter(dn_no=o["dn_no"]).exists():
             e.append(f"DN {o['dn_no']} already imported")
         if not sk():
-            e.append(f"SKU/ASIN {o['sku_code']} not found")
+            e.append(f"SKU/ASIN {o['sku_code']} not found" + _did_you_mean_sku(o["sku_code"]))
         if not Promotion.objects.filter(agreement_no=o["agreement_no"]).exists():
             w.append(f"Agreement {o['agreement_no']} not in tracker. DN will be unlinked")
     elif tid == "U9":
         from claims.models import Claim
         c = Claim.objects.filter(claim_no=o["claim_no"]).first()
         if not c:
-            e.append(f"Claim {o['claim_no']} not found")
+            from matching.matchers import closest_claim
+            hit = closest_claim(o["claim_no"])
+            e.append(f"Claim {o['claim_no']} not found" + (f". Did you mean {hit}?" if hit else ""))
         elif c.status != "sent":
             e.append(f"Claim {o['claim_no']} already has a credit note")
         elif abs(c.amount_h - to_h(o["amount_sar"])) > cfg.tol_h():
             w.append(f"CN is {(c.amount_h - to_h(o['amount_sar'])) / 100:,.2f} short of the claim")
     return e, w
+
+
+def _suggest_payments(ps):
+    """Match suggestions for imported payments that need a person (rules now; Claude in the background if on)."""
+    from matching import ai
+    from matching import services as ms
+    from matching.tasks import ai_review
+    n = 0
+    for p in ps:
+        if p.status == "unmatched":
+            n += bool(ms.refresh("pay_inv", p))
+        else:
+            ms.refresh_deduction(p)
+            ms.refresh("pay_dn", p)
+        if ai.available():
+            ai_review.defer(kind="pay_inv" if p.status == "unmatched" else "deduction", source=p.payment_no)
+    return [f"{n} of the payments to match have a suggested invoice"] if n else []
+
+
+def _suggest_dns(dns):
+    from matching import ai
+    from matching import services as ms
+    from matching.tasks import ai_review
+    n = 0
+    for dn in dns:
+        n += bool(ms.refresh("dn_promo", dn))
+        if ai.available():
+            ai_review.defer(kind="dn_promo", source=dn.dn_no)
+    return [f"{n} of the unlinked debit notes have a suggested promotion"] if n else []
 
 
 def _has_delivery(po):
@@ -302,6 +339,7 @@ def apply(tid, rows, user):
     elif tid == "U6":
         from payments.services import import_payment
         m = s = u = 0
+        todo = []
         for o in rows:
             p = import_payment(o["payment_no"], parse_date(o["remit_date"]), o["invoice_no"], to_h(o["amount_paid_sar"]),
                                to_h(o["deduction_sar"] or 0), o.get("deduction_reason", ""))
@@ -309,7 +347,10 @@ def apply(tid, rows, user):
             m += p.status == "matched"
             s += p.status == "short"
             u += p.status == "unmatched"
+            if p.status in ("unmatched", "short"):
+                todo.append(p)
         lines += [f"{created} payments imported", f"{m} matched · {s} short-paid · {u} to match"]
+        lines += _suggest_payments(todo)
     elif tid == "U7":
         from promotions.services import create_promotion
         for name, ls in group(rows, "promo_name").items():
@@ -323,6 +364,7 @@ def apply(tid, rows, user):
     elif tid == "U8":
         from debitnotes.services import create_dn, notify_status
         mm = ul = 0
+        unlinked = []
         for no, ls in group(rows, "dn_no").items():
             dn = create_dn(no, ls[0]["agreement_no"], parse_date(ls[0]["dn_date"]),
                            [(resolve_sku(o["sku_code"]), int(num(o["units"])), to_h(o["rate_sar"])) for o in ls], user=user)
@@ -331,7 +373,10 @@ def apply(tid, rows, user):
             mm += ev["status"] == "mismatch"
             ul += ev["status"] == "unlinked"
             run_dn_checks.defer(dn_no=no)
+            if ev["status"] == "unlinked":
+                unlinked.append(dn)
         lines += [f"{created} debit notes imported and checked (R10)", f"{mm} mismatch · {ul} unlinked · {created - mm - ul} match"]
+        lines += _suggest_dns(unlinked)
     elif tid == "U9":
         from claims.services import get_claim, _record_cn
         sh = 0

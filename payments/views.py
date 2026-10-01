@@ -26,6 +26,10 @@ def pay_list(request):
     disputes = list(Dispute.objects.select_related("po", "promotion").order_by("-created_at"))
     paid30 = [p for p in P.filter(status__in=["matched", "recovered"], remit_date__gt=now - timedelta(days=30))]
     open_d = [d for d in disputes if d.status in ("open", "submitted")]
+    if tab == "short":
+        from matching.views import deduction_for
+        for p in short:
+            p.ded = deduction_for(p)
     kpis = [dict(l="Paid, last 30 days", v=f"{round(sum(p.paid_h for p in paid30) / 100):,}", s=f"SAR · {len(paid30)} payments", url="?tab=matched"),
             dict(l="Short-paid", v=f"{round(sum(p.deduction_h for p in short) / 100):,}", s=f"SAR · {len(short)} to resolve", url="?tab=short", alert=bool(short)),
             dict(l="To match", v=len(unm), s="Payments without an invoice", url="?tab=match"),
@@ -54,8 +58,10 @@ def dispute(request, pay_no):
         d = svc.open_dispute(request.user, pay_no, request.POST.get("type", "other"), to_h(request.POST.get("amount") or 0),
                              request.POST.get("note", ""), request.FILES.getlist("evidence"))
         return htmx.done(request, f"Dispute {d.case_no} opened", close_modal=True)
-    guess = next((k for k, _ in DISPUTE_TYPES if k in p.reason.lower()), "shortage")
-    return render(request, "dialogs/dispute.html", dict(p=p, types=DISPUTE_TYPES, guess=guess))
+    from matching.views import deduction_for
+    s = deduction_for(p)
+    guess = s.targets[0] if s.targets and s.targets[0] in dict(DISPUTE_TYPES) else "other"
+    return render(request, "dialogs/dispute.html", dict(p=p, types=DISPUTE_TYPES, guess=guess, s=s))
 
 
 def accept(request, pay_no):
@@ -87,9 +93,11 @@ def payment_drawer(request, key):
         request.GET = request.GET.copy()
         request.GET.setdefault("tab", "invoice")
         return drawer(request, p.po.po_no)
+    from matching.ai import available
+    from matching.views import suggestions_for
     open_inv = list(Invoice.objects.filter(po__stage="invoiced").select_related("po"))
-    guess = next((i for i in open_inv if i.invoice_no == p.hint), None) or next((i for i in open_inv if i.total_h == p.paid_h), None)
-    return render(request, "records/payment.html", dict(p=p, invoices=open_inv, guess=guess, url=request.get_full_path()))
+    return render(request, "records/payment.html", dict(p=p, invoices=open_inv, url=request.get_full_path(),
+                  sugs=suggestions_for("pay_inv", p), kind="pay_inv", source=p.payment_no, perm_name="dispute", ai_on=available()))
 
 
 def dispute_drawer(request, key):

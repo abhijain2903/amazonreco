@@ -30,6 +30,20 @@ def _span(td):
     return f"{round(s / 86400)} days"
 
 
+def _best_suggestions():
+    """Top pending match suggestion per record, one query for the whole list."""
+    from matching.models import MatchSuggestion
+    best = {}
+    for s in MatchSuggestion.objects.filter(status="pending", kind__in=["pay_inv", "dn_promo"]).order_by("-score"):
+        best.setdefault((s.kind, s.source), s)
+    return best
+
+
+def _best(best, kind, source):
+    s = best.get((kind, source))
+    return f" · suggested: {s.label.split(' · ')[0]} ({s.score})" if s else ""
+
+
 def action_items(user, mine=True):
     now = timezone.now()
     cfg = get_cfg()
@@ -79,6 +93,7 @@ def action_items(user, mine=True):
                            sub="SAP billing does not match ASN quantity" if blk else f"Delivered {_span(now - po.delivered_at)} ago",
                            amt=round(v * 1.15), due=po.delivered_at + timedelta(days=2), roles=["PIC"], mismatch=blk,
                            open=("po", po.po_no, "invoice"), cta=dict(label="Fix" if blk else "Review", kind="open", url=f"/records/po/{po.po_no}/?tab=invoice")))
+    best = _best_suggestions()
     for p in Payment.objects.filter(status__in=["short", "unmatched"]).select_related("po"):
         if p.status == "short":
             it.append(dict(key="p" + p.payment_no, sev="bad", icon="wallet", title=f"Short payment on {p.invoice_ref}",
@@ -87,7 +102,7 @@ def action_items(user, mine=True):
                            cta=dict(label="Resolve", kind="link", url="/pay/?tab=short")))
         else:
             it.append(dict(key="u" + p.payment_no, sev="warn", icon="wallet", title=f"Match payment {p.payment_no}",
-                           sub=f'Invoice reference "{p.invoice_ref}" not found', amt=p.paid_h, due=p.remit_date + timedelta(days=5),
+                           sub=f'Invoice reference "{p.invoice_ref}" not found' + _best(best, "pay_inv", p.payment_no), amt=p.paid_h, due=p.remit_date + timedelta(days=5),
                            roles=["Finance"], open=("payment", p.payment_no, ""), cta=dict(label="Match", kind="open", url=f"/records/payment/{p.payment_no}/")))
     for pr in Promotion.objects.exclude(stage__in=["closed", "rejected", "claimed"]).prefetch_related("lines"):
         st = stage_of(pr, cfg, now)
@@ -126,7 +141,7 @@ def action_items(user, mine=True):
                            cta=dict(label="Approve", kind="post", url=f"/dns/{dn.dn_no}/approve/", perm="dn")))
         elif ev["status"] == "unlinked":
             it.append(dict(key="x" + dn.dn_no, sev="warn", icon="link", title=f"Link DN {dn.dn_no} to a promotion",
-                           sub=f"Agreement # {dn.agreement_no} is not in the tracker", amt=ev["charged_h"], due=dn.dn_date + timedelta(days=7),
+                           sub=f"Agreement # {dn.agreement_no} is not in the tracker" + _best(best, "dn_promo", dn.dn_no), amt=ev["charged_h"], due=dn.dn_date + timedelta(days=7),
                            roles=["PIC"], mismatch=True, open=("dn", dn.dn_no, ""), cta=dict(label="Link", kind="open", url=f"/records/dn/{dn.dn_no}/")))
     for c in Claim.objects.filter(status="shortfall").select_related("promotion"):
         it.append(dict(key="f" + c.claim_no, sev="bad", icon="claim", title=f"Credit note short on {c.claim_no}",

@@ -54,7 +54,12 @@ def drawer(request, key):
         m = skus <= {l.sku_id for l in p.lines.all()}
         cands.append(dict(p=p, d=_similar(p.agreement_no, dn.agreement_no), m=m))
     cands.sort(key=lambda c: (not c["m"], c["d"]))
-    return render(request, "records/dn.html", dict(dn=dn, ev=ev, cands=cands, events=timeline("dn", dn.dn_no), url=request.get_full_path()))
+    ctx = dict(dn=dn, ev=ev, cands=cands, events=timeline("dn", dn.dn_no), url=request.get_full_path())
+    if not dn.validated:
+        from matching.ai import available
+        from matching.views import suggestions_for
+        ctx.update(sugs=suggestions_for("dn_promo", dn), kind="dn_promo", source=dn.dn_no, perm_name="dn", ai_on=available())
+    return render(request, "records/dn.html", ctx)
 
 
 @require_POST

@@ -315,7 +315,7 @@ def healthz(request):
 def settings_page(request):
     require(request.user, "settings")
     tabs = [("skus", "SKU master"), ("prices", "Price list"), ("rules", "Rules & tolerances"), ("cats", "Categories"),
-            ("fcs", "Amazon FCs"), ("users", "Users & roles"), ("notify", "Notifications"), ("numbering", "Numbering")]
+            ("matching", "Matching"), ("fcs", "Amazon FCs"), ("users", "Users & roles"), ("notify", "Notifications"), ("numbering", "Numbering")]
     tab = htmx.pick(request, "tab", [k for k, _ in tabs], "skus")
     ctx = {"tab": tab, "tabs": tabs}
     if tab in ("skus", "prices"):
@@ -328,6 +328,8 @@ def settings_page(request):
         ctx.update(page=page, q=q, total=Sku.objects.count(), prices={p.sku_id: p for p in _open_prices(page.object_list)})
     if tab == "rules":
         ctx["rules"] = rule_rows()
+    if tab == "matching":
+        ctx.update(_matching_ctx())
     if tab == "cats":
         ctx["cats"] = [dict(c=c, name=n, skus=Sku.objects.filter(category=c).count(), promos=Promotion.objects.filter(category=c).count(),
                             typical={"PA": 4, "DI": 6, "TV": 1, "HAV": 1, "Bundle": 1}[c]) for c, n in CATEGORY_NAMES.items()]
@@ -348,6 +350,24 @@ def settings_page(request):
                           ("Dispute case", "DSP-{0000}", f"DSP-{peek_number('dispute', 41):04d}"),
                           ("ME invoice number", "MEI-{YYYY}-{00000}", f"MEI-2026-{peek_number('invoice', 4310):05d}")]
     return render(request, "pages/settings.html", ctx)
+
+
+def _matching_ctx():
+    """Settings, AI provider status and how suggestions have fared over the last 90 days."""
+    from django.db.models import Count
+    from matching.models import KINDS, MatchSettings, MatchSuggestion
+    since = timezone.now() - timedelta(days=90)
+    decided = MatchSuggestion.objects.filter(decided_at__gte=since, status__in=["accepted", "rejected", "auto"])
+    by = {(r["kind"], r["method"], r["status"]): r["n"] for r in decided.values("kind", "method", "status").annotate(n=Count("id"))}
+    stats = []
+    for k, label in KINDS:
+        for m, ml in (("rules", "Rules"), ("ai", "Claude")):
+            acc = by.get((k, m, "accepted"), 0) + by.get((k, m, "auto"), 0)
+            rej = by.get((k, m, "rejected"), 0)
+            if acc + rej:
+                stats.append(dict(kind=label, method=ml, accepted=acc, rejected=rej, rate=round(acc / (acc + rej) * 100)))
+    return dict(mcfg=MatchSettings.get(), ai_provider=settings.AI_PROVIDER, ai_model=settings.AI_MODEL, ai_region=settings.AI_REGION,
+                mstats=stats, pending_n=MatchSuggestion.objects.filter(status="pending").count())
 
 
 def _open_prices(skus):

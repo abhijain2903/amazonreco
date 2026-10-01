@@ -70,20 +70,65 @@ def import_payment(payment_no, remit_date, invoice_ref, paid_h, deduction_h=0, r
     return p
 
 
+AUTO_MATCH_MIN = 85  # "Run auto-match": apply a single-invoice suggestion at least this good ...
+AUTO_MATCH_MARGIN = 10  # ... and clearly better than the next candidate. Everything else stays a suggestion.
+
+
 @transaction.atomic
 def auto_match(user):
+    """Match unmatched payments whose best suggestion is confident and unambiguous. An invoice used in this run is
+    not offered to the next payment, so one invoice is never matched twice."""
     require(user, "dispute")
-    open_inv = list(Invoice.objects.filter(po__stage="invoiced").select_related("po"))
-    n = 0
+    from matching.matchers import payment_invoice
+    used, n = set(), 0
     for p in Payment.objects.select_for_update().filter(status="unmatched"):
-        g = (next((i for i in open_inv if i.invoice_no == p.hint), None)
-             or next((i for i in open_inv if norm(i.invoice_no).endswith(norm(p.invoice_ref)[-5:]) and i.total_h == p.paid_h), None)
-             or next((i for i in open_inv if i.total_h == p.paid_h), None))
-        if g:
-            p.invoice_ref = g.invoice_no
-            match_payment(p)
-            n += 1
+        c = payment_invoice(p, exclude=used)
+        if not c or len(c[0]["targets"]) != 1 or c[0]["score"] < AUTO_MATCH_MIN:
+            continue
+        if len(c) > 1 and c[0]["score"] - c[1]["score"] < AUTO_MATCH_MARGIN:
+            continue
+        inv_no = c[0]["targets"][0]
+        p.invoice_ref = inv_no
+        match_payment(p)
+        audit("po", p.po.po_no, f"Payment {p.payment_no} auto-matched to {inv_no} (score {c[0]['score']}: {', '.join(c[0]['reasons'])})",
+              user, action="match")
+        used.add(inv_no)
+        n += 1
     return n
+
+
+@transaction.atomic
+def split_payment(user, payment_no, invoice_nos, version=None, note=""):
+    """One remittance line that pays several invoices: allocate it invoice by invoice (each gets what is still due;
+    the last gets the remainder) and match each part. The first part keeps the payment number; the others are
+    numbered <payment>/2, /3 …"""
+    require(user, "dispute")
+    from core.services import check_version
+    p = Payment.objects.select_for_update().get(payment_no=payment_no)
+    check_version(p, version)
+    if p.status != "unmatched":
+        raise CommandError("This payment is already matched.")
+    invs = [find_invoice(n) for n in invoice_nos]
+    if len(invs) < 2 or not all(invs) or len({i.pk for i in invs}) != len(invs):
+        raise CommandError("Pick two or more different open invoices.")
+    remaining, parts = p.paid_h, []
+    for k, inv in enumerate(invs):
+        already = Payment.objects.filter(invoice=inv, status__in=COUNTED).aggregate(s=Sum("paid_h"))["s"] or 0
+        amt = remaining if k == len(invs) - 1 else min(remaining, inv.total_h - already)
+        remaining -= amt
+        if k == 0:
+            part = p
+            part.paid_h, part.invoice_ref = amt, inv.invoice_no
+        else:
+            part = Payment(payment_no=f"{p.payment_no}/{k + 1}", remit_date=p.remit_date, invoice_ref=inv.invoice_no, paid_h=amt,
+                           reason=p.reason)
+        part.bump()
+        match_payment(part)
+        parts.append(part)
+    for part in parts:
+        audit("po", part.po.po_no, f"Payment {p.payment_no} split across {len(parts)} invoices: {fmt_sar(part.paid_h)} "
+              f"to {part.invoice_ref}" + (f" ({note})" if note else ""), user, action="match")
+    return parts
 
 
 @transaction.atomic
@@ -137,7 +182,15 @@ def accept_deduction(user, payment_no, reason):
 @transaction.atomic
 def link_to_dn(user, payment_no, dn_no):
     require(user, "dispute")
+    from debitnotes.models import DebitNote
     p = Payment.objects.select_for_update().get(payment_no=payment_no)
+    if p.status != "short":
+        raise CommandError("Only short payments can be linked to a debit note.")
+    dn = DebitNote.objects.filter(dn_no=dn_no, validated=True).first()
+    if not dn:
+        raise CommandError(f"Debit note {dn_no} is not a validated debit note.")
+    if Payment.objects.exclude(pk=p.pk).filter(reason__contains=f"linked to {dn_no}").exists():
+        raise CommandError(f"Debit note {dn_no} is already linked to another deduction.")
     p.status = "accepted"
     p.reason = f"{p.reason} · linked to {dn_no}".strip(" ·")
     p.save()

@@ -123,6 +123,13 @@ def drawer(request, po_no):
         net = sum(c["net_h"] for c in ic)
         ctx.update(ic=ic, inv_blocked=any(not c["qty_ok"] or not c["price_ok"] for c in ic), inv_net=net, inv_vat=round(net * 0.15), inv_total=net + round(net * 0.15),
                    paid=sum(p.paid_h for p in pays if p.status in ("matched", "short", "accepted", "disputed", "recovered")))
+        if tab == "invoice":
+            from matching.ai import available
+            from matching.views import deduction_for, suggestions_for
+            shorts = [p for p in pays if p.status == "short"]
+            for p in shorts:
+                p.ded, p.dn_sugs = deduction_for(p), suggestions_for("pay_dn", p)
+            ctx.update(shorts=shorts, ai_on=available() if shorts else False)
     if tab == "checks":
         rows = []
         for l in lines:

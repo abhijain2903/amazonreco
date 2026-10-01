@@ -440,3 +440,17 @@ a.cchip{text-decoration:none}
 .wiz{padding-top:12px}
 .dt td b.mono,.dt td.mono{white-space:nowrap}
 .still,.still .modal{animation:none!important}
+
+/* Match suggestions (matching app) */
+.sug{margin:12px 0;padding:0 0 4px}
+.sug-h{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:12px 14px 6px}
+.sug-act{margin-left:auto;display:flex;gap:6px}
+.sug-i{padding:10px 14px;border-top:1px solid var(--border)}
+.sug-i.best{background:var(--primary-soft)}
+.sug-t{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sug-score{flex:0 0 80px;height:6px;border-radius:3px;background:var(--sunk);overflow:hidden;margin-left:auto}
+.sug-score i{display:block;height:100%}
+.sug-score i.hi{background:var(--ok)}.sug-score i.mid{background:var(--warn)}.sug-score i.lo{background:var(--gray)}
+.sug-ai{margin-top:4px;color:var(--info)}
+.sug-btns{display:flex;gap:6px;margin-top:8px}
+.sug-ded{display:grid;gap:6px}

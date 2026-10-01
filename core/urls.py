@@ -32,5 +32,6 @@ urlpatterns = [
     path("claims/", include("claims.urls")),
     path("uploads/", include("uploads.urls")),
     path("integrations/", include("integrations.urls")),
+    path("matching/", include("matching.urls")),
     path("api/v1/", api.urls),
 ]
