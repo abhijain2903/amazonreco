@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="ph"><div><h1>Debit Notes</h1><p>Every Amazon debit note is matched to its promotion agreement: models, dates, rate and units sold.</p></div>
-<div class="ph-act"><button class="btn" hx-get="/uploads/new/?type=U8" hx-target="#modal" {% perm 'upload' %}>{% icon 'upload' %}<span>Upload debit notes</span></button></div></div>
+<div class="ph-act">{% include "partials/export_btn.html" %}<button class="btn" hx-get="/uploads/new/?type=U8" hx-target="#modal" {% perm 'upload' %}>{% icon 'upload' %}<span>Upload debit notes</span></button></div></div>
 <div class="tabs" role="tablist">{% for t in tabs %}<a class="tab {% if t.id == tab %}on{% endif %}" href="?tab={{ t.id }}">{{ t.label }}<span class="ct">{{ t.count }}</span></a>{% endfor %}</div>
 {% if rows %}<div class="tw"><table class="dt"><thead><tr><th>DN #</th><th>Agreement #</th><th>Promotion</th><th>DN date</th><th class="num">Charged SAR</th><th class="num">Expected SAR</th><th class="num">Variance SAR</th><th>Status</th></tr></thead><tbody>
 {% for r in rows %}<tr class="click" {% if r.e.promo %}hx-get="/records/promo/{{ r.e.promo.mecl_ref }}/?tab=dn"{% else %}hx-get="/records/dn/{{ r.d.dn_no }}/"{% endif %} hx-target="#drawer">

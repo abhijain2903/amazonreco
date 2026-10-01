@@ -10,7 +10,7 @@ from django.utils import timezone
 from catalog.models import CATEGORY_NAMES, FulfilmentCentre, Price, Sku, resolve_sku
 from core.services import fmt_sar, next_number, notify, peek_number, to_h
 
-NUM_FIELDS = {"agreed_cost_sar", "free_stock", "qty_ordered", "unit_cost_sar", "qty", "cartons", "amount_paid_sar",
+NUM_FIELDS = {"case_pack", "agreed_cost_sar", "free_stock", "qty_ordered", "unit_cost_sar", "qty", "cartons", "amount_paid_sar",
               "deduction_sar", "support_per_unit_sar", "expected_units", "units", "rate_sar", "amount_sar"}
 DATE_FIELDS = {"valid_from", "valid_to", "order_date", "ship_window_start", "ship_window_end", "ship_date",
                "remit_date", "start_date", "end_date", "dn_date", "cn_date"}
@@ -20,7 +20,8 @@ TYPES = OrderedDict([
     ("U1", dict(name="SKU master & ASIN map", src="SAP + Vendor Central catalog", go="/settings/?tab=skus", cols=[
         ("sku_code", 1, ["sku", "material", "materialno", "itemcode", "mesku"]), ("model_no", 1, ["model", "modelnumber"]),
         ("asin", 1, ["amazonasin"]), ("category", 1, ["cat", "productcategory"]), ("ean", 0, ["barcode", "gtin", "upc"]),
-        ("description", 0, ["desc", "name", "productname", "title"])])),
+        ("description", 0, ["desc", "name", "productname", "title"]),
+        ("case_pack", 0, ["casepack", "caseqty", "packsize", "unitspercase", "innerpack"])])),
     ("U2", dict(name="Agreed price list", src="Commercial team", go="/settings/?tab=prices", cols=[
         ("sku_code", 1, ["sku", "material", "asin", "model"]), ("agreed_cost_sar", 1, ["cost", "agreedcost", "netcost", "price", "costsar"]),
         ("valid_from", 1, ["from", "startdate", "validfrom"]), ("valid_to", 0, ["to", "enddate", "validto"])])),
@@ -42,7 +43,7 @@ TYPES = OrderedDict([
     ("U7", dict(name="Promotions (bulk)", src="Product team Excel", go="/promos/?tab=pre", perm="promo", cols=[
         ("promo_name", 1, ["name", "promotion"]), ("category", 1, ["cat"]), ("start_date", 1, ["start"]), ("end_date", 1, ["end"]),
         ("sku_code", 1, ["sku", "model", "asin"]), ("support_per_unit_sar", 1, ["support", "supportperunit", "fundingperunit"]),
-        ("expected_units", 1, ["units", "expected"])])),
+        ("expected_units", 1, ["units", "expected"]), ("promo_type", 0, ["type", "promotiontype", "dealtype"])])),
     ("U8", dict(name="Debit notes", src="Vendor Central", go="/dns/?tab=todo", cols=[
         ("dn_no", 1, ["dn", "debitnote", "debitnoteno"]), ("agreement_no", 1, ["agreement", "agreementnumber", "agreementid"]),
         ("dn_date", 1, ["date"]), ("sku_code", 1, ["sku", "asin", "model"]), ("units", 1, ["qty", "quantity"]),
@@ -155,9 +156,11 @@ def validate(tid, o, ctx, cfg):
         if not FulfilmentCentre.objects.filter(code=o["fc_code"]).exists():
             e.append(f"FC code {o['fc_code']} is not in the FC master. An admin adds it in Settings → Amazon FCs")
         if s and not exists:
-            ok, _ = engine.price_check(to_h(o["unit_cost_sar"]), s.cost_h, cfg)
+            from catalog.models import agreed_cost_h
+            agreed = agreed_cost_h(s, parse_date(o["order_date"]) or timezone.now())
+            ok, _ = engine.price_check(to_h(o["unit_cost_sar"]), agreed, cfg)
             if not ok:
-                w.append(f"Price check R1: cost {num(o['unit_cost_sar']):,.2f} vs agreed {s.cost_h / 100:,.2f}")
+                w.append(f"Price check R1: cost {num(o['unit_cost_sar']):,.2f} vs agreed {agreed / 100:,.2f} on the order date")
             if not engine.stock_check(int(num(o["qty_ordered"])), s.free_stock, cfg):
                 w.append(f"Stock check R2: {int(num(o['qty_ordered']))} ordered, {s.free_stock} free")
     elif tid == "U5":
@@ -274,6 +277,8 @@ def apply(tid, rows, user):
                 vals["ean"] = o["ean"]
             if o.get("description"):
                 vals["description"] = o["description"]
+            if o.get("case_pack") and num(o["case_pack"]) and num(o["case_pack"]) >= 1:
+                vals["case_pack"] = int(num(o["case_pack"]))
             if s:
                 for k, v in vals.items():
                     setattr(s, k, v)
@@ -353,12 +358,20 @@ def apply(tid, rows, user):
         lines += _suggest_payments(todo)
     elif tid == "U7":
         from promotions.services import create_promotion
+
+        def type_of(v):
+            from promotions.models import PROMO_TYPES
+            k = "".join(ch for ch in (v or "").lower() if ch.isalnum())
+            for code, label in PROMO_TYPES:
+                if k and (k == code.replace("_", "") or k in "".join(ch for ch in label.lower() if ch.isalnum())):
+                    return code
+            return "price_discount"
         for name, ls in group(rows, "promo_name").items():
             st, en = parse_date(ls[0]["start_date"]), parse_date(ls[0]["end_date"])
             en = en.replace(hour=23, minute=59)
             create_promotion(user, name, cat_of(ls[0]["category"]), st, en, "Product team",
                              [(resolve_sku(o["sku_code"]), to_h(o["support_per_unit_sar"]), int(num(o["expected_units"]))) for o in ls],
-                             source="bulk upload")
+                             source="bulk upload", promo_type=type_of(ls[0].get("promo_type")))
             created += 1
         lines += [f"{created} promotions created as drafts", "Submit them to Amazon from the Promotions page"]
     elif tid == "U8":

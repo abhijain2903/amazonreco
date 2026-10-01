@@ -27,3 +27,16 @@ class Claim(Base):
     @property
     def gap_h(self):
         return None if self.cn_h is None else self.amount_h - self.cn_h
+
+
+class CreditNote(Base):
+    """One credit note from the product team. A claim can be settled by several (e.g. a top-up after a shortfall)."""
+
+    claim = models.ForeignKey(Claim, on_delete=models.CASCADE, related_name="credit_notes")
+    cn_no = models.CharField(max_length=30)
+    amount_h = models.BigIntegerField()
+    cn_date = models.DateTimeField()
+
+    class Meta:
+        ordering = ["created_at"]
+        constraints = [models.UniqueConstraint(fields=["claim", "cn_no"], name="uniq_cn_per_claim")]

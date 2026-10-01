@@ -203,16 +203,26 @@ def link_to_dn(user, payment_no, dn_no):
 
 
 @transaction.atomic
-def set_dispute_status(user, case_no, status):
+def set_dispute_status(user, case_no, status, recovered_h=None, case_id=None):
+    """Open → submitted (with Amazon's case ID) → won (all or part of the amount) or lost."""
     require(user, "dispute")
     d = Dispute.objects.select_for_update().get(case_no=case_no)
     allowed = {"open": ["submitted"], "submitted": ["won", "lost"]}
     if status not in allowed.get(d.status, []):
         raise CommandError("That status change is not allowed.")
+    if case_id:
+        d.amazon_case_id = case_id.strip()[:40]
+    if status == "won":
+        recovered_h = d.amount_h if recovered_h in (None, "") else int(recovered_h)
+        if not 0 < recovered_h <= d.amount_h:
+            raise CommandError(f"The amount recovered must be above 0 and at most {fmt_sar(d.amount_h)}.")
+        d.recovered_h = recovered_h
     d.status = status
     d.bump()
     d.save()
-    audit("dispute", d.case_no, {"submitted": "Submitted to Amazon", "won": f"Marked won. {fmt_sar(d.amount_h)} recovered",
+    part = status == "won" and d.recovered_h < d.amount_h
+    audit("dispute", d.case_no, {"submitted": "Submitted to Amazon" + (f" (case {d.amazon_case_id})" if d.amazon_case_id else ""),
+                                 "won": f"Marked won. {fmt_sar(d.recovered_h)} recovered" + (f" of {fmt_sar(d.amount_h)}" if part else ""),
                                  "lost": "Marked lost"}[status], user, action=status)
     p = Payment.objects.filter(payment_no=d.ref).first()
     if p and status in ("won", "lost"):

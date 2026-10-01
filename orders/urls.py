@@ -9,6 +9,7 @@ urlpatterns = [
     path("<str:po_no>/confirm/", views.confirm),
     path("<str:po_no>/book/", views.book),
     path("<str:po_no>/release/", views.release),
+    path("<str:po_no>/hold/", views.hold),
     path("<str:po_no>/sync-delivery/", views.sync_delivery),
     path("<str:po_no>/asn/", views.submit_asn),
     path("<str:po_no>/slot/", views.slot),

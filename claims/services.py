@@ -47,14 +47,23 @@ def generate_claim(user, ref):
 
 
 def _record_cn(c, cn_no, cn_h, cn_date, at, user=None, name=None):
-    c.cn_no, c.cn_h, c.cn_date = cn_no, cn_h, cn_date
+    """Adds a credit note; the claim compares the total of all its credit notes with the claim (R11)."""
+    from .models import CreditNote
+    if c.credit_notes.filter(cn_no=cn_no).exists():
+        raise CommandError(f"Credit note {cn_no} is already recorded on {c.claim_no}.")
+    CreditNote.objects.create(claim=c, cn_no=cn_no, amount_h=cn_h, cn_date=cn_date)
+    total = sum(c.credit_notes.values_list("amount_h", flat=True))
+    several = c.credit_notes.count() > 1
+    c.cn_no, c.cn_h, c.cn_date = cn_no, total, cn_date
     p = c.promotion
-    if engine.cn_check(c.amount_h, cn_h, get_cfg()) == "closed":
+    what = f"Credit notes now total {fmt_sar(total)}" if several else f"Credit note {cn_no} for {fmt_sar(cn_h)}"
+    if engine.cn_check(c.amount_h, total, get_cfg()) == "closed":
         c.status, p.stage = "closed", "closed"
-        text = f"Credit note {cn_no} for {fmt_sar(cn_h)} matches the claim. Promotion closed"
+        text = f"{what}, matching the claim. Promotion closed"
     else:
         c.status, p.stage = "shortfall", "cn_shortfall"
-        text = f"Credit note {cn_no} is {fmt_sar(c.amount_h - cn_h)} short of the claim"
+        text = (f"{what}, {fmt_sar(c.amount_h - total)} short of the claim" if total < c.amount_h
+                else f"{what}, {fmt_sar(total - c.amount_h)} more than the claim")
     c.bump()
     c.save()
     p.bump()
@@ -68,8 +77,8 @@ def _record_cn(c, cn_no, cn_h, cn_date, at, user=None, name=None):
 def record_cn(user, claim_no, cn_no, cn_h, cn_date=None):
     require(user, "cn")
     c = get_claim(claim_no, lock=True)
-    if c.status != "sent":
-        raise CommandError("This claim already has a credit note.")
+    if c.status not in ("sent", "shortfall"):
+        raise CommandError("This claim is closed. No more credit notes can be added.")
     if not (cn_no or "").strip() or cn_h is None or cn_h < 0:
         raise CommandError("Enter the credit note number and amount.")
     _record_cn(c, cn_no.strip(), cn_h, cn_date or timezone.now(), timezone.now(), user)

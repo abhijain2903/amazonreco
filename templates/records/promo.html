@@ -4,7 +4,7 @@
 {% block title %}{{ p.mecl_ref }}{% endblock %}
 {% block chip %}{% promo_chip p st %}{% endblock %}
 {% block head %}
-<div class="sum"><span>{% cat p.category %} {{ p.category|catname }}</span><span>Runs <b>{{ p.start|fd }} – {{ p.end|fd }}</b></span><span>DN due <b>{{ p.dn_due|fd }}</b></span><span>Support <b>{{ support|sar }}</b></span><span>Owner <b>{{ p.owner_name }}</b></span></div>
+<div class="sum"><span>{% cat p.category %} {{ p.category|catname }}</span><span>{{ p.get_promo_type_display }}</span><span>Runs <b>{{ p.start|fd }} – {{ p.end|fd }}</b></span><span>DN due <b>{{ p.dn_due|fd }}</b></span><span>Support <b>{{ support|sar }}</b></span><span>Owner <b>{{ p.owner_name }}</b></span></div>
 {% include "partials/chain.html" %}
 {% include "partials/stepper.html" %}
 {% include "partials/dtabs.html" %}
@@ -31,11 +31,14 @@
 {% elif tab == 'claim' %}
   {% if not c %}<div class="empty"><div class="ei">{% icon 'claim' %}</div><b>No claim yet</b><span>{% if st == 'dn_validated' %}The debit note is validated. Generate the claim for the product team.{% else %}The claim is created after the debit note is validated.{% endif %}</span></div>
   {% else %}
-  <div class="kv2"><div><span>Claim</span><b class="mono">{{ c.claim_no }}</b></div><div><span>Sent</span><b>{{ c.sent_at|fd }}</b></div><div><span>Claim amount</span><b>{{ c.amount_h|sar }}</b></div><div><span>Credit note</span><b class="mono">{{ c.cn_no|default:"—" }}</b></div>
-  <div><span>CN amount</span><b>{% if c.cn_h is None %}—{% else %}{{ c.cn_h|sar }}{% endif %}</b></div><div><span>Gap</span><b class="{% if c.status == 'shortfall' %}bad-t{% endif %}">{% if c.cn_h is None %}—{% else %}{{ c.gap_h|sar }}{% endif %}</b></div></div>
+  <div class="kv2"><div><span>Claim</span><b class="mono">{{ c.claim_no }}</b></div><div><span>Sent</span><b>{{ c.sent_at|fd }}</b></div><div><span>Claim amount</span><b>{{ c.amount_h|sar }}</b></div><div><span>Credit note{% if cns|length > 1 %}s{% endif %}</span><b class="mono">{% for n in cns %}{{ n.cn_no }}{% if not forloop.last %}, {% endif %}{% empty %}{{ c.cn_no|default:"—" }}{% endfor %}</b></div>
+  <div><span>Credited</span><b>{% if c.cn_h is None %}—{% else %}{{ c.cn_h|sar }}{% endif %}</b></div><div><span>Gap</span><b class="{% if c.status == 'shortfall' %}bad-t{% endif %}">{% if c.cn_h is None %}—{% else %}{{ c.gap_h|sar }}{% endif %}</b></div></div>
   {% if c.status == 'shortfall' %}<div class="banner bad">{% icon 'alert' %}<span class="t"><b>Credit note is {{ c.gap_h|sar }} short (R11).</b> Chase the product team or close with a write-off.</span></div>
   {% elif c.status == 'closed' %}<div class="banner ok">{% icon 'check' %}<span class="t"><b>Reconciled.</b> The credit note matches the claim.</span></div>
   {% elif c.status == 'written_off' %}<div class="banner info">{% icon 'info' %}<span class="t">Closed with a write-off of {{ c.gap_h|sar }}.</span></div>{% endif %}
+  {% if cns|length > 1 %}<h3 class="sect-h">Credit notes</h3>
+  <div class="tw"><table class="dt compact"><thead><tr><th>Credit note</th><th>Date</th><th class="num">SAR</th></tr></thead><tbody>
+  {% for n in cns %}<tr><td class="mono">{{ n.cn_no }}</td><td>{{ n.cn_date|fd }}</td><td class="num">{{ n.amount_h|n }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
   <h3 class="sect-h">Sell-out claim file</h3>
   <div class="tw"><table class="dt compact"><thead><tr><th>MECL ref</th><th>Agreement</th><th>Model</th><th class="num">Units</th><th class="num">Rate</th><th class="num">SAR</th></tr></thead><tbody>
   {% for l in c.debit_note.lines.all %}<tr><td class="mono">{{ p.mecl_ref }}</td><td class="mono">{{ p.agreement_no }}</td><td>{{ l.sku.model_no }}</td><td class="num">{{ l.units|num }}</td><td class="num">{{ l.rate_h|n2 }}</td><td class="num">{{ l.charged_h|n }}</td></tr>{% endfor %}</tbody></table></div>
@@ -43,6 +46,7 @@
 
 {% elif tab == 'timeline' %}{% include "partials/timeline.html" %}
 {% elif tab == 'notes' %}{% include "partials/notes.html" %}
+{% elif tab == 'docs' %}{% include "partials/documents.html" %}
 {% endif %}
 {% endblock %}
 
@@ -80,6 +84,7 @@
   <button class="btn pri" hx-get="/claims/{{ c.claim_no }}/cn/" hx-target="#modal" {% perm 'cn' %}>Record credit note</button>
 {% elif st == 'cn_shortfall' %}
   <button class="btn" hx-post="/claims/{{ c.claim_no }}/chase/" hx-swap="none" {% perm 'cn' %}>Chase product team</button>
+  <button class="btn" hx-get="/claims/{{ c.claim_no }}/cn/" hx-target="#modal" {% perm 'cn' %}>Add another credit note</button>
   <button class="btn danger" hx-post="/claims/{{ c.claim_no }}/write-off/" hx-swap="none" hx-confirm="Close {{ c.claim_no }} with a write-off of {{ c.gap_h|sar }}?" {% perm 'cn' %}>Close with write-off</button>
 {% endif %}
 {% endblock %}

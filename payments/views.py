@@ -34,6 +34,16 @@ def pay_list(request):
             dict(l="Short-paid", v=f"{round(sum(p.deduction_h for p in short) / 100):,}", s=f"SAR · {len(short)} to resolve", url="?tab=short", alert=bool(short)),
             dict(l="To match", v=len(unm), s="Payments without an invoice", url="?tab=match"),
             dict(l="Open disputes", v=f"{round(sum(d.amount_h for d in open_d) / 100):,}", s=f"SAR · {len(open_d)} case{'' if len(open_d) == 1 else 's'}", url="?tab=disputes")]
+    from core.exports import sar, wants_export, xlsx
+    if wants_export(request):
+        if tab == "disputes":
+            return xlsx("Disputes", ["Case", "Type", "Reference", "PO / promotion", "Amount SAR", "Opened", "Follow up by", "Status"],
+                        [[d.case_no, d.get_type_display(), d.ref, d.po.po_no if d.po else (d.promotion.mecl_ref if d.promotion else ""),
+                          sar(d.amount_h), d.created_at, d.due, d.get_status_display()] for d in disputes])
+        ps = {"short": short, "match": unm, "matched": matched}[tab]
+        return xlsx(f"Payments_{tab}", ["Payment", "Date", "Invoice reference", "Invoice SAR", "Paid SAR", "Deduction SAR", "Reason", "PO", "Status"],
+                    [[p.payment_no, p.remit_date, p.invoice_ref, sar(p.invoice.total_h) if p.invoice else None, sar(p.paid_h),
+                      sar(p.deduction_h), p.reason, p.po.po_no if p.po else "", p.get_status_display()] for p in ps])
     counts = {"short": len(short), "match": len(unm), "matched": len(matched), "disputes": len(disputes)}
     return render(request, "pages/pay.html", dict(tab=tab, kpis=kpis, short=short, unm=unm, matched=matched, disputes=disputes,
                   tabs=[dict(id=k, label=l, count=counts[k]) for k, l in TABS]))
@@ -82,7 +92,8 @@ def link_dn(request, pay_no):
 
 @require_POST
 def dispute_status(request, case_no, status):
-    d = svc.set_dispute_status(request.user, case_no, status)
+    rec = request.POST.get("recovered")
+    d = svc.set_dispute_status(request.user, case_no, status, to_h(rec) if rec not in (None, "") else None, request.POST.get("case_id"))
     return htmx.done(request, f"Dispute {d.case_no}: {d.get_status_display().lower()}")
 
 

@@ -39,6 +39,8 @@ class Dispute(Base):
     status = models.CharField(max_length=10, choices=DISPUTE_STATUS, default="open")
     due = models.DateTimeField(default=timezone.now)
     note = models.TextField(blank=True)
+    amazon_case_id = models.CharField(max_length=40, blank=True, help_text="Case ID from Vendor Central")
+    recovered_h = models.BigIntegerField(null=True, blank=True, help_text="Amount Amazon gave back (may be part of the claim)")
 
     class Meta:
         ordering = ["-created_at"]

@@ -22,7 +22,7 @@
     {% for r in lrows %}{% with l=r.l c=r.c %}
     <tr class="{% if c.tone == 'bad' %}err{% elif c.tone == 'warn' %}warnrow{% endif %}">
       <td>{% if c.tone == 'ok' %}{% icon 'check' 'ico-ok' %}{% elif c.tone == 'warn' %}{% icon 'alert' 'ico-warn' %}{% else %}{% icon 'x' 'ico-bad' %}{% endif %}</td>
-      <td><div><b style="font-weight:500">{{ l.sku.model_no }}</b><div class="small muted">{{ l.sku.description }} · <span class="mono">{{ l.sku.sku_code }}</span></div><div class="small faint mono">{{ l.asin }}</div></div></td>
+      <td><div><b style="font-weight:500">{{ l.sku.model_no }}</b><div class="small muted">{{ l.sku.description }} · <span class="mono">{{ l.sku.sku_code }}</span></div><div class="small faint mono">{{ l.asin }}</div>{% if not c.case_ok %}<div class="small" style="color:var(--warn)">Not whole cases of {{ c.case_pack }}: {{ c.case_qty|num }} would be whole cases</div>{% endif %}</div></td>
       <td class="num">{{ l.qty_ordered|num }}</td><td class="num {% if not c.stock_ok %}warn-t{% endif %}">{{ c.stock|num }}</td>
       <td class="num {% if not c.price_ok %}bad-t{% endif %}">{{ l.cost_h|n2 }}</td>
       <td class="num">{{ c.agreed_h|n2 }}{% if not c.price_ok %}<div class="small bad-t">{{ c.diff_h|n2 }}</div>{% endif %}</td>
@@ -61,6 +61,7 @@
   {% else %}
     <div class="kv2"><div><span>ASN</span><b class="mono">{{ sh.asn_no }}</b></div><div><span>SAP delivery</span><b class="mono">{{ sh.sap_delivery_no }}</b></div><div><span>Cartons</span><b>{{ sh.cartons }}</b></div><div><span>Ship date</span><b>{{ sh.ship_date|fdt }}</b></div>
     <div><span>Carrier Central slot</span><b>{% if sh.slot_id %}<span class="mono">{{ sh.slot_id }}</span> · {{ sh.slot_start|fdt }}{% else %}<span class="warn-t">Not booked</span>{% endif %}</b></div><div><span>Delivered</span><b>{{ po.delivered_at|fdt }}</b></div></div>
+    {% if needs_pod %}<div class="banner warn">{% icon 'alert' %}<span class="t"><b>No proof of delivery attached.</b> Attach the signed POD / GRN so a shortage Amazon deducts later can be disputed.</span><button class="btn sm" hx-get="{{ base }}?tab=docs" hx-target="#drawer">Attach POD</button></div>{% endif %}
     {% if slot_risk %}<div class="banner bad">{% icon 'alert' %}<span class="t"><b>No delivery slot and the truck ships {{ sh.ship_date|due }}.</b> Book a Carrier Central slot now.</span></div>{% endif %}
     <div class="tw"><table class="dt compact"><thead><tr><th>Model</th><th class="num">ASN qty</th></tr></thead><tbody>{% for l in sh.lines.all %}<tr><td>{{ l.sku.model_no }} <span class="small muted mono">{{ l.sku.sku_code }}</span></td><td class="num">{{ l.qty|num }}</td></tr>{% endfor %}</tbody></table></div>
   {% endif %}
@@ -99,17 +100,18 @@
 {% elif tab == 'checks' %}{% include "partials/checks.html" %}
 {% elif tab == 'timeline' %}{% include "partials/timeline.html" %}
 {% elif tab == 'notes' %}{% include "partials/notes.html" %}
+{% elif tab == 'docs' %}{% include "partials/documents.html" %}
 {% endif %}
 {% endblock %}
 
 {% block hint %}{% if po.stage == 'new' %}{% if issues %}Decide on the flagged lines, then confirm. Amazon receives one acknowledgement.{% else %}Every line passed. One click confirms the whole PO.{% endif %}
 {% elif po.stage == 'confirmed' %}{% if demo %}Creates the SAP sales order and the Salesforce order with no retyping.{% else %}Enter the SAP order number once the order is booked in SAP.{% endif %}
-{% elif po.stage == 'booked' %}Amazon account is within its credit limit (example).
+{% elif po.stage == 'booked' %}{% if po.credit_hold %}On credit hold: {{ po.credit_hold }}.{% else %}Release for shipment, or hold it with a reason.{% endif %}
 {% elif po.stage == 'released' %}{% if d %}{% if asn_blocked %}Fix the ASN quantities first.{% else %}Sends the ASN to Amazon.{% endif %}{% else %}Waiting for SAP to create the delivery.{% endif %}
 {% elif po.stage == 'asn' %}Truck ships {{ sh.ship_date|fdt }}.
 {% elif po.stage == 'slot' %}Slot {{ sh.slot_id }} at {{ sh.slot_start|fdt }}.
 {% elif po.stage == 'delivered' %}{% if inv_blocked %}Invoice blocked until billing matches the ASN.{% else %}Submits the invoice to Amazon.{% endif %}
-{% elif po.stage == 'invoiced' %}Waiting for Amazon payment. Upload the remittance report to match it.
+{% elif po.stage == 'invoiced' %}{% if short_pay %}Short-paid by {{ short_pay.deduction_h|sar }}{% if short_pay.reason %} ({{ short_pay.reason }}){% endif %}. Dispute it, accept it or link it to a debit note.{% elif open_dispute %}Deduction disputed in {{ open_dispute.case_no }} — waiting for Amazon.{% else %}Waiting for Amazon payment. Upload the remittance report to match it.{% endif %}
 {% elif po.stage == 'paid' %}Paid {{ po.paid_at|fd }}. This order is complete.{% else %}This PO was rejected in full.{% endif %}{% endblock %}
 
 {% block foot %}
@@ -123,7 +125,9 @@
     {% if not demo %}<input class="inp" name="sap_order_no" placeholder="SAP order #" aria-label="SAP order number" style="width:150px">{% endif %}
     <button class="btn pri" {% perm 'book' %}>Book in SAP &amp; Salesforce</button></form>
 {% elif po.stage == 'booked' %}
-  <button class="btn pri" hx-post="/pos/{{ po.po_no }}/release/" hx-vals='{"version": "{{ po.version }}"}' hx-swap="none" {% perm 'release' %}>Release for shipment</button>
+  {% if not po.credit_hold %}<form class="row" style="flex-wrap:nowrap;gap:6px" hx-post="/pos/{{ po.po_no }}/hold/" hx-swap="none"><input type="hidden" name="version" value="{{ po.version }}">
+    <input class="inp" name="reason" placeholder="Hold reason" aria-label="Credit hold reason" style="width:170px" {% if not caps.release %}disabled{% endif %}><button class="btn" type="submit" {% perm 'release' %}>Hold</button></form>{% endif %}
+  <button class="btn pri" hx-post="/pos/{{ po.po_no }}/release/" hx-vals='{"version": "{{ po.version }}"}' hx-swap="none" {% perm 'release' %}>{% if po.credit_hold %}Lift hold &amp; release{% else %}Release for shipment{% endif %}</button>
 {% elif po.stage == 'released' %}
   {% if d %}{% if tab == 'shipment' %}<button class="btn pri" hx-post="/pos/{{ po.po_no }}/asn/" hx-include="#asn-form" hx-vals='{"version": "{{ po.version }}"}' hx-swap="none" {% perm 'ship' %}>{% icon 'send' %}<span>Submit ASN</span></button>
   {% else %}<button class="btn pri" hx-get="{{ base }}?tab=shipment" hx-target="#drawer">Build ASN</button>{% endif %}
@@ -136,6 +140,10 @@
   {% if tab == 'invoice' %}<button class="btn pri" hx-post="/pos/{{ po.po_no }}/invoice/" hx-vals='{"version": "{{ po.version }}"}' hx-swap="none" {% perm 'invoice' %} {% if inv_blocked %}disabled{% endif %}>{% icon 'send' %}<span>Submit invoice</span></button>
   {% else %}<button class="btn pri" hx-get="{{ base }}?tab=invoice" hx-target="#drawer">Build invoice</button>{% endif %}
 {% elif po.stage == 'invoiced' %}
-  <button class="btn" hx-get="/uploads/new/?type=U6" hx-target="#modal" {% perm 'upload' %}>{% icon 'upload' %}<span>Upload remittance</span></button>
+  {% if short_pay %}<button class="btn pri" hx-get="/pay/{{ short_pay.payment_no }}/dispute/" hx-target="#modal" {% perm 'dispute' %}>Dispute</button>
+  <button class="btn" hx-get="/pay/{{ short_pay.payment_no }}/link-dn/" hx-target="#modal" {% perm 'dispute' %}>Link to debit note</button>
+  <button class="btn" hx-get="/pay/{{ short_pay.payment_no }}/accept/" hx-target="#modal" {% perm 'dispute' %}>Accept deduction</button>
+  {% elif open_dispute %}<button class="btn" hx-get="/records/dispute/{{ open_dispute.case_no }}/" hx-target="#drawer">Open {{ open_dispute.case_no }}</button>
+  {% else %}<button class="btn" hx-get="/uploads/new/?type=U6" hx-target="#modal" {% perm 'upload' %}>{% icon 'upload' %}<span>Upload remittance</span></button>{% endif %}
 {% endif %}
 {% endblock %}

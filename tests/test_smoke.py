@@ -23,8 +23,8 @@ def _records():
     from payments.models import Dispute, Payment
     from promotions.models import Promotion
     urls = [f"/records/po/{p.po_no}/?tab={t}" for p in PurchaseOrder.objects.all()
-            for t in ["lines", "shipment", "invoice", "checks", "timeline", "notes"]]
-    urls += [f"/records/promo/{p.mecl_ref}/?tab={t}" for p in Promotion.objects.all() for t in ["models", "dn", "claim", "timeline", "notes"]]
+            for t in ["lines", "shipment", "invoice", "checks", "timeline", "notes", "docs"]]
+    urls += [f"/records/promo/{p.mecl_ref}/?tab={t}" for p in Promotion.objects.all() for t in ["models", "dn", "claim", "timeline", "notes", "docs"]]
     urls += [u for d in DebitNote.objects.all() for u in (f"/records/dn/{d.dn_no}/", f"/dns/{d.dn_no}/override/")]
     urls += [f"/records/payment/{p.payment_no}/" for p in Payment.objects.all()]
     urls += [f"/records/dispute/{d.case_no}/" for d in Dispute.objects.all()]

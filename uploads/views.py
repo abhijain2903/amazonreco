@@ -26,11 +26,30 @@ def _types():
     return out
 
 
+# Go-live: the order to load opening data in, so every later file finds what it refers to.
+CUTOVER = [
+    ("U1", "SKU master & ASIN map", "Every active model with its ASIN, EAN and case pack. POs, prices and promotions all look SKUs up here."),
+    ("U2", "Agreed price list", "Current agreed cost per SKU with its valid-from date. Older prices only if open POs were ordered at them."),
+    (None, "Settings", "Users and roles, the Saudi public holidays for the year (Settings → Calendar) and the rule tolerances."),
+    ("U3", "Stock snapshot", "Free stock from SAP on the cut-over morning."),
+    ("U4", "Open Amazon POs", "Only POs not yet invoiced. Older, paid POs stay in SAP / Vendor Central."),
+    ("U5", "SAP deliveries", "Deliveries already picked for the open POs, so their ASNs can be built here."),
+    ("U6", "Open remittances", "Payments from the cut-over date onwards, plus any short-payments still being worked."),
+    ("U7", "Live and upcoming promotions", "Promotions still running, or ended but not yet claimed."),
+    ("U8", "Open debit notes", "Debit notes not yet validated or claimed."),
+    ("U9", "Credit notes", "Credit notes for claims already sent, so their shortfalls show correctly."),
+]
+
+
 def upload_page(request):
     hist = UploadBatch.objects.filter(status="committed")[:100]
     for b in hist:
         b.type_name = types.TYPES[b.upload_type]["name"]
-    return render(request, "pages/uploads.html", dict(utypes=_types(), hist=hist))
+    utypes = _types()
+    done = {u["id"] for u in utypes if u["last"]}
+    cutover = [dict(n=i, tid=t, title=title, text=text, done=t in done) for i, (t, title, text) in enumerate(CUTOVER, 1)]
+    return render(request, "pages/uploads.html", dict(utypes=utypes, hist=hist, cutover=cutover,
+                                                      cut_done=sum(1 for c in cutover if c["done"]), cut_total=sum(1 for c in cutover if c["tid"])))
 
 
 def _wiz(request, step, tid=None, batch=None, **extra):

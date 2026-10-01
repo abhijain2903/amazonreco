@@ -20,11 +20,16 @@ REASONS = {
 
 # ---------- queries ----------
 def line_checks(line, cfg=None):
+    """R1 price (against the price valid on the PO's order date), R2 stock, and the case-pack hint."""
+    from catalog.models import agreed_cost_h
     cfg = cfg or get_cfg()
-    agreed = line.sku.cost_h
+    agreed = agreed_cost_h(line.sku, line.po.order_date)
     price_ok, diff = engine.price_check(line.cost_h, agreed, cfg)
     stock = line.sku.free_stock
-    return {"agreed_h": agreed, "diff_h": diff, "price_ok": price_ok, "stock": stock,
+    cp = line.sku.case_pack or 1
+    return {"case_pack": cp, "case_ok": cp <= 1 or line.qty_ordered % cp == 0,
+            "case_qty": (min(line.qty_ordered, max(stock, 0)) // cp) * cp,
+            "agreed_h": agreed, "diff_h": diff, "price_ok": price_ok, "stock": stock,
             "stock_ok": engine.stock_check(line.qty_ordered, stock, cfg),
             "tone": engine.line_tone(line.cost_h, agreed, line.qty_ordered, stock, cfg)}
 
@@ -51,11 +56,12 @@ def po_units(po, lines=None):
 
 
 def refresh_suggestions(po, cfg=None):
+    from catalog.models import agreed_cost_h
     cfg = cfg or get_cfg()
     for l in po_lines(po):
         if l.touched:
             continue
-        d, q, r = engine.suggest(l.cost_h, l.sku.cost_h, l.qty_ordered, l.sku.free_stock, cfg)
+        d, q, r = engine.suggest(l.cost_h, agreed_cost_h(l.sku, po.order_date), l.qty_ordered, l.sku.free_stock, cfg)
         if (l.decision, l.qty_confirmed, l.reason) != (d, q, r):
             l.decision, l.qty_confirmed, l.reason = d, q, r
             l.save(update_fields=["decision", "qty_confirmed", "reason", "updated_at"])
@@ -235,7 +241,28 @@ def release_po(user, po_no, version=None):
     check_version(po, version)
     if po.stage != "booked":
         raise CommandError("Only booked orders can be released.")
+    if po.credit_hold:
+        audit("po", po.po_no, f"Credit hold lifted ({po.credit_hold})", user, action="unhold")
+        po.credit_hold = ""
     _release(po, timezone.now(), user, with_delivery=settings.DEMO_SIMULATIONS)
+    return po
+
+
+@transaction.atomic
+def hold_po(user, po_no, reason, version=None):
+    """Credit control holds a booked order (credit limit, overdue balance …) with a reason; releasing lifts it."""
+    require(user, "release")
+    po = get_po(po_no, lock=True)
+    check_version(po, version)
+    if po.stage != "booked":
+        raise CommandError("Only booked orders can be put on hold.")
+    reason = (reason or "").strip()
+    if not reason:
+        raise CommandError("Give a reason for the hold, e.g. over credit limit.")
+    po.credit_hold = reason[:200]
+    po.bump()
+    po.save()
+    audit("po", po.po_no, f"Put on credit hold: {po.credit_hold}", user, action="hold", reason=po.credit_hold)
     return po
 
 

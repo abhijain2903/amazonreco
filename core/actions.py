@@ -18,6 +18,8 @@ from promotions.services import stage_of, support_h
 from rules import engine
 from rules.services import get_cfg
 
+from .workcal import add_working_days, add_working_hours
+
 RANK = {"bad": 0, "warn": 1, "info": 2, "": 3}
 
 
@@ -64,12 +66,13 @@ def action_items(user, mine=True):
                            cta=dict(label="Review", kind="open", url=f"/records/po/{po.po_no}/?tab=lines")))
         elif po.stage == "confirmed":
             it.append(dict(key="b" + po.po_no, sev="info", icon="po", title=f"Book {po.po_no} in SAP and Salesforce",
-                           sub=f"{po_units(po, lines):,} units", amt=v, due=po.confirmed_at + timedelta(hours=8),
+                           sub=f"{po_units(po, lines):,} units", amt=v, due=add_working_hours(po.confirmed_at, 8),
                            roles=["PIC", "Planning"], open=link, cta=dict(label="Book", kind="post", url=f"/pos/{po.po_no}/book/", perm="book")))
         elif po.stage == "booked":
-            it.append(dict(key="r" + po.po_no, sev="warn" if now - po.booked_at > timedelta(hours=4) else "info", icon="po",
-                           title=f"Release {po.po_no} for shipment", sub=f"SAP order {po.sap_order_no} · waiting {_span(now - po.booked_at)}",
-                           amt=v, due=po.booked_at + timedelta(hours=4), roles=["Credit"], open=link,
+            it.append(dict(key="r" + po.po_no, sev="warn" if po.credit_hold or now > add_working_hours(po.booked_at, 4) else "info", icon="po",
+                           title=f"On credit hold · {po.po_no}" if po.credit_hold else f"Release {po.po_no} for shipment",
+                           sub=(f"{po.credit_hold} · " if po.credit_hold else "") + f"SAP order {po.sap_order_no} · waiting {_span(now - po.booked_at)}",
+                           amt=v, due=add_working_hours(po.booked_at, 4), roles=["Credit"], open=link,
                            cta=dict(label="Release", kind="post", url=f"/pos/{po.po_no}/release/", perm="release")))
         elif po.stage == "released":
             d = delivery_of(po)
@@ -91,18 +94,18 @@ def action_items(user, mine=True):
             it.append(dict(key="i" + po.po_no, sev="bad" if blk else "info", icon="receipt",
                            title=f"Invoice blocked for {po.po_no}" if blk else f"Submit invoice for {po.po_no}",
                            sub="SAP billing does not match ASN quantity" if blk else f"Delivered {_span(now - po.delivered_at)} ago",
-                           amt=round(v * 1.15), due=po.delivered_at + timedelta(days=2), roles=["PIC"], mismatch=blk,
+                           amt=round(v * 1.15), due=add_working_days(po.delivered_at, 2), roles=["PIC"], mismatch=blk,
                            open=("po", po.po_no, "invoice"), cta=dict(label="Fix" if blk else "Review", kind="open", url=f"/records/po/{po.po_no}/?tab=invoice")))
     best = _best_suggestions()
     for p in Payment.objects.filter(status__in=["short", "unmatched"]).select_related("po"):
         if p.status == "short":
             it.append(dict(key="p" + p.payment_no, sev="bad", icon="wallet", title=f"Short payment on {p.invoice_ref}",
                            sub=f"{p.reason or 'No reason given'} · PO {p.po.po_no}", amt=p.deduction_h, amt_label="short",
-                           due=p.remit_date + timedelta(days=10), roles=["Finance", "PIC"], mismatch=True, open=("po", p.po.po_no, "invoice"),
+                           due=add_working_days(p.remit_date, 10), roles=["Finance", "PIC"], mismatch=True, open=("po", p.po.po_no, "invoice"),
                            cta=dict(label="Resolve", kind="link", url="/pay/?tab=short")))
         else:
             it.append(dict(key="u" + p.payment_no, sev="warn", icon="wallet", title=f"Match payment {p.payment_no}",
-                           sub=f'Invoice reference "{p.invoice_ref}" not found' + _best(best, "pay_inv", p.payment_no), amt=p.paid_h, due=p.remit_date + timedelta(days=5),
+                           sub=f'Invoice reference "{p.invoice_ref}" not found' + _best(best, "pay_inv", p.payment_no), amt=p.paid_h, due=add_working_days(p.remit_date, 5),
                            roles=["Finance"], open=("payment", p.payment_no, ""), cta=dict(label="Match", kind="open", url=f"/records/payment/{p.payment_no}/")))
     for pr in Promotion.objects.exclude(stage__in=["closed", "rejected", "claimed"]).prefetch_related("lines"):
         st = stage_of(pr, cfg, now)
@@ -131,22 +134,28 @@ def action_items(user, mine=True):
         if ev["status"] == "mismatch":
             it.append(dict(key="m" + dn.dn_no, sev="bad", icon="receipt", title=f"DN {dn.dn_no} does not match the agreement",
                            sub=f"{ev['promo'].mecl_ref} · charged SAR {round(ev['charged_h'] / 100):,}, expected SAR {round(ev['expected_h'] / 100):,}",
-                           amt=ev["variance_h"], amt_label="variance", due=dn.dn_date + timedelta(days=7), roles=["PIC", "Finance"],
+                           amt=ev["variance_h"], amt_label="variance", due=add_working_days(dn.dn_date, 7), roles=["PIC", "Finance"],
                            mismatch=True, open=("promo", ev["promo"].mecl_ref, "dn"),
                            cta=dict(label="Validate", kind="open", url=f"/records/promo/{ev['promo'].mecl_ref}/?tab=dn")))
         elif ev["status"] == "to_validate":
             it.append(dict(key="v" + dn.dn_no, sev="info", icon="receipt", title=f"Approve DN {dn.dn_no}",
-                           sub=f"{ev['promo'].mecl_ref} · matches the agreement", amt=ev["charged_h"], due=dn.dn_date + timedelta(days=7),
+                           sub=f"{ev['promo'].mecl_ref} · matches the agreement", amt=ev["charged_h"], due=add_working_days(dn.dn_date, 7),
                            roles=["PIC", "Finance"], open=("promo", ev["promo"].mecl_ref, "dn"),
                            cta=dict(label="Approve", kind="post", url=f"/dns/{dn.dn_no}/approve/", perm="dn")))
         elif ev["status"] == "unlinked":
             it.append(dict(key="x" + dn.dn_no, sev="warn", icon="link", title=f"Link DN {dn.dn_no} to a promotion",
-                           sub=f"Agreement # {dn.agreement_no} is not in the tracker" + _best(best, "dn_promo", dn.dn_no), amt=ev["charged_h"], due=dn.dn_date + timedelta(days=7),
+                           sub=f"Agreement # {dn.agreement_no} is not in the tracker" + _best(best, "dn_promo", dn.dn_no), amt=ev["charged_h"], due=add_working_days(dn.dn_date, 7),
                            roles=["PIC"], mismatch=True, open=("dn", dn.dn_no, ""), cta=dict(label="Link", kind="open", url=f"/records/dn/{dn.dn_no}/")))
+    from payments.models import Dispute
+    for d in Dispute.objects.filter(status__in=["open", "submitted"], due__lt=now).select_related("po", "promotion"):
+        it.append(dict(key="q" + d.case_no, sev="warn", icon="alert", title=f"Follow up dispute {d.case_no}",
+                       sub=f"{d.get_type_display()} · {'with Amazon' + (' (case ' + d.amazon_case_id + ')' if d.amazon_case_id else '') if d.status == 'submitted' else 'not submitted yet'}",
+                       amt=d.amount_h, amt_label="disputed", due=d.due, roles=["Finance", "PIC"], open=("dispute", d.case_no, ""),
+                       cta=dict(label="Open", kind="open", url=f"/records/dispute/{d.case_no}/")))
     for c in Claim.objects.filter(status="shortfall").select_related("promotion"):
         it.append(dict(key="f" + c.claim_no, sev="bad", icon="claim", title=f"Credit note short on {c.claim_no}",
                        sub=f"{c.promotion.mecl_ref} · claimed SAR {round(c.amount_h / 100):,}, received SAR {round(c.cn_h / 100):,}",
-                       amt=c.gap_h, amt_label="short", due=c.cn_date + timedelta(days=14), roles=["Product", "Finance"], mismatch=True,
+                       amt=c.gap_h, amt_label="short", due=add_working_days(c.cn_date, 10), roles=["Product", "Finance"], mismatch=True,
                        open=("promo", c.promotion.mecl_ref, "claim"), cta=dict(label="Open", kind="open", url=f"/records/promo/{c.promotion.mecl_ref}/?tab=claim")))
     for i in it:
         i.setdefault("mismatch", False)

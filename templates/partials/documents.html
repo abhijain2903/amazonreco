@@ -1,0 +1,12 @@
+{# Documents on a record. Context: docs, doc_entity, doc_key #}
+<form hx-post="/docs/{{ doc_entity }}/{{ doc_key }}/" hx-encoding="multipart/form-data" hx-swap="none" class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
+  <div class="field" style="margin:0;flex:1 1 220px"><label for="doc-file">Attach a document</label><input class="inp" type="file" id="doc-file" name="file" style="padding:5px" required></div>
+  <div class="field" style="margin:0"><label for="doc-kind">Type</label><select class="sel" id="doc-kind" name="kind">
+    <option value="pod">Proof of delivery</option><option value="evidence">Evidence</option><option value="other" selected>Other</option></select></div>
+  <button class="btn" type="submit" {% perm 'upload' %}>{% icon 'upload' %}<span>Attach</span></button>
+</form>
+{% if docs %}<div class="tw"><table class="dt compact"><thead><tr><th>Document</th><th>Type</th><th>Added</th><th></th></tr></thead><tbody>
+{% for d in docs %}<tr><td class="mono">{{ d.name }}</td><td>{{ d.kind }}</td><td>{{ d.at|fdt }}<div class="small muted">{{ d.by }}</div></td>
+<td><div class="row" style="flex-wrap:nowrap;gap:6px">{% if d.preview %}<button class="btn sm" hx-get="{{ d.preview }}" hx-target="#modal">View</button>{% endif %}<a class="btn sm" href="{{ d.url }}" hx-boost="false" download>{% icon 'download' %}<span>Download</span></a></div></td></tr>{% endfor %}
+</tbody></table></div>
+{% else %}<p class="muted small">No documents yet. Files the hub creates (acknowledgement, ASN, invoice, claim) appear here automatically.</p>{% endif %}

@@ -454,3 +454,12 @@ a.cchip{text-decoration:none}
 .sug-ai{margin-top:4px;color:var(--info)}
 .sug-btns{display:flex;gap:6px;margin-top:8px}
 .sug-ded{display:grid;gap:6px}
+
+.cutover{border:1px solid var(--border);border-radius:12px;background:var(--surface);padding:12px 16px;margin-bottom:18px}
+.cutover summary{cursor:pointer}
+.cutover ol{list-style:none;margin:12px 0 8px;padding:0;display:grid;gap:8px}
+.cutover li{display:grid;grid-template-columns:28px 1fr auto;gap:10px;align-items:center}
+.cutover li p{margin:2px 0 0}
+.cutover .n{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:600;background:var(--gray-soft);color:var(--muted)}
+.cutover li.done .n{background:var(--ok-soft);color:var(--ok)}
+@media (max-width:600px){.cutover li{grid-template-columns:28px 1fr}.cutover li .btn{grid-column:2;justify-self:start}}

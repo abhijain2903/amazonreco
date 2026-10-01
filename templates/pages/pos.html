@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="ph"><div><h1>Purchase Orders</h1><p>Amazon POs from arrival to invoice. Price and stock checks run the moment a PO lands.</p></div>
-<div class="ph-act"><button class="btn" hx-get="/uploads/new/?type=U4" hx-target="#modal" {% perm 'upload' %}>{% icon 'upload' %}<span>Upload POs</span></button></div></div>
+<div class="ph-act">{% include "partials/export_btn.html" %}<button class="btn" hx-get="/uploads/new/?type=U4" hx-target="#modal" {% perm 'upload' %}>{% icon 'upload' %}<span>Upload POs</span></button></div></div>
 <div class="kpis">{% for k in kpis %}<a class="kpi {% if k.alert %}alert{% endif %}" href="{{ k.url }}"><span class="kpi-l">{{ k.l }}</span><span class="kpi-v">{{ k.v }}</span><span class="kpi-s">{{ k.s }}</span></a>{% endfor %}</div>
 {% if view == 'table' %}<div class="tabs" role="tablist">{% for t in tabs %}<a class="tab {% if t.id == tab %}on{% endif %}" href="?tab={{ t.id }}&q={{ q|urlencode }}&fc={{ fc }}">{{ t.label }}<span class="ct">{{ t.count }}</span></a>{% endfor %}</div>{% endif %}
 <form class="fbar" hx-get="/pos/" hx-target="#view" hx-select="#view" hx-swap="outerHTML" hx-trigger="input changed delay:300ms from:#po-q, change from:#po-fc" hx-push-url="true">

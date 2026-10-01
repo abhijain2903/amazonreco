@@ -33,6 +33,7 @@ class Sku(Base):
     cost_h = models.BigIntegerField(default=0, help_text="Current agreed Amazon cost, halalas")
     free_stock = models.IntegerField(default=0)
     stock_as_of = models.DateTimeField(default=timezone.now)
+    case_pack = models.PositiveIntegerField(default=1, help_text="Units per case; PO quantities should be whole cases")
     active = models.BooleanField(default=True)
 
     class Meta:
@@ -50,6 +51,17 @@ class Price(Base):
 
     class Meta:
         ordering = ["-valid_from"]
+
+
+def agreed_cost_h(sku, on_date):
+    """The agreed cost per unit valid on a date (the price list keeps history: valid_from / valid_to).
+    Falls back to the SKU's current cost when no price row covers that date."""
+    from django.db.models import Q
+    from django.utils import timezone
+    d = timezone.localtime(on_date).date() if hasattr(on_date, "date") else on_date
+    p = (Price.objects.filter(sku=sku, valid_from__lte=d).filter(Q(valid_to__isnull=True) | Q(valid_to__gte=d))
+         .order_by("-valid_from").first())
+    return p.cost_h if p else sku.cost_h
 
 
 def resolve_sku(value):

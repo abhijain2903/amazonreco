@@ -61,6 +61,11 @@ def pos_list(request):
         dict(l="To book / release", v=counts["book"] + counts["release"], s="Planning and credit control", url="?tab=book"),
         dict(l="Ordered, last 30 days", v=f"{round(sum(r['value'] for r in month) / 100):,}", s=f"SAR · {len(month)} POs", url="?tab=all"),
     ]
+    from core.exports import sar, wants_export, xlsx
+    if wants_export(request):
+        return xlsx(f"POs_{tab}", ["PO", "FC", "Ordered", "Confirm by", "Lines", "Units", "Value SAR", "Lines to decide", "Stage"],
+                    [[r["po"].po_no, r["po"].fc.code, r["po"].order_date, r["po"].confirm_by, r["n_lines"], r["units"], sar(r["value"]),
+                      r["issues"], r["po"].stage_label] for r in rows])
     board = []
     if view == "board":
         for s in STAGES:
@@ -90,14 +95,21 @@ def _steps(po, cfg, lines):
 
 def drawer(request, po_no):
     po = get_po(po_no)
-    tab = htmx.pick(request, "tab", ["lines", "shipment", "invoice", "checks", "timeline", "notes"], "lines")
+    tab = htmx.pick(request, "tab", ["lines", "shipment", "invoice", "checks", "timeline", "notes", "docs"], "lines")
     cfg = get_cfg()
     now = timezone.now()
     lines = list(po.lines.select_related("sku"))
     pays = list(Payment.objects.filter(po=po))
+    # What the payment side is waiting on, for the footer on every tab
+    short_pay = next((p for p in pays if p.status == "short"), None)
+    disputed = next((p for p in pays if p.status == "disputed"), None)
     d, sh, b, inv = delivery_of(po), shipment_of(po), billing_of(po), invoice_of(po)
     base = f"/records/po/{po.po_no}/"
-    ctx = dict(po=po, tab=tab, base=base, url=f"{base}?tab={tab}", lines=lines, pays=pays, d=d, sh=sh, b=b, inv=inv, now=now,
+    from core.models import Attachment
+    from payments.models import Dispute
+    needs_pod = po.delivered_at is not None and not Attachment.objects.filter(entity="po", entity_id=po.po_no, kind="pod").exists()
+    ctx = dict(po=po, tab=tab, needs_pod=needs_pod, base=base, url=f"{base}?tab={tab}", lines=lines, pays=pays, short_pay=short_pay,
+               open_dispute=Dispute.objects.filter(ref=disputed.payment_no).first() if disputed else None, d=d, sh=sh, b=b, inv=inv, now=now,
                value=po_value_h(po, lines), units=po_units(po, lines), state=engine.confirm_state(po.confirm_by, now, cfg),
                steps=_steps(po, cfg, lines), reasons=REASONS,
                chain=[dict(l="Amazon PO", v=po.po_no), dict(l="SAP order", v=po.sap_order_no), dict(l="Salesforce", v=po.sf_order_id),
@@ -105,7 +117,8 @@ def drawer(request, po_no):
                       dict(l="Payment", v=pays and pays[0].payment_no, tab="invoice")],
                dtabs=[dict(id="lines", label="Lines", n=len(lines)), dict(id="shipment", label="Shipment"), dict(id="invoice", label="Invoice & payment"),
                       dict(id="checks", label="Checks"), dict(id="timeline", label="Timeline"),
-                      dict(id="notes", label="Notes", n=Note.objects.filter(entity="po", entity_id=po.po_no).count())])
+                      dict(id="notes", label="Notes", n=Note.objects.filter(entity="po", entity_id=po.po_no).count()),
+                      dict(id="docs", label="Documents")])
     # The footer hint reads this on every tab, so it must not depend on the Lines tab being open.
     ctx["issues"] = po_issues(po, cfg, lines) if po.stage == "new" else 0
     if tab == "lines":
@@ -158,6 +171,9 @@ def drawer(request, po_no):
         ctx["events"] = timeline("po", po.po_no)
     if tab == "notes":
         ctx.update(notes=Note.objects.filter(entity="po", entity_id=po.po_no), entity="po", key=po.po_no)
+    if tab == "docs":
+        from core.views import documents
+        ctx.update(docs=documents("po", po.po_no, po), doc_entity="po", doc_key=po.po_no)
     return render(request, "records/po.html", ctx)
 
 
@@ -207,6 +223,12 @@ def release(request, po_no):
     svc.release_po(request.user, po_no, request.POST.get("version"))
     d = delivery_of(get_po(po_no))
     return htmx.done(request, "Released." + (f" SAP delivery {d.delivery_no} received (simulated sync)" if d else " Waiting for the SAP delivery."))
+
+
+@require_POST
+def hold(request, po_no):
+    po = svc.hold_po(request.user, po_no, request.POST.get("reason", ""), request.POST.get("version"))
+    return htmx.done(request, f"{po.po_no} on credit hold", "info")
 
 
 @require_POST

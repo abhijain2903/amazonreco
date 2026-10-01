@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="ph"><div><h1>Shipments &amp; Invoices</h1><p>Turn released orders into an ASN, a delivery slot, a delivery and an invoice. Each step is checked against SAP and the PO.</p></div>
-<div class="ph-act"><button class="btn" hx-get="/uploads/new/?type=U5" hx-target="#modal" {% perm 'upload' %}>{% icon 'upload' %}<span>Upload SAP deliveries</span></button></div></div>
+<div class="ph-act">{% include "partials/export_btn.html" %}<button class="btn" hx-get="/uploads/new/?type=U5" hx-target="#modal" {% perm 'upload' %}>{% icon 'upload' %}<span>Upload SAP deliveries</span></button></div></div>
 <div class="tabs" role="tablist">{% for t in tabs %}<a class="tab {% if t.id == tab %}on{% endif %}" href="?tab={{ t.id }}">{{ t.label }}<span class="ct">{{ t.count }}</span></a>{% endfor %}</div>
 {% if not rows %}<div class="tw"><div class="empty"><div class="ei">{% icon 'truck' %}</div><b>Nothing here</b><span>{% if tab == 'asn' %}Released orders appear here once SAP creates the delivery.{% elif tab == 'slot' %}Orders move here after the ASN is sent.{% elif tab == 'transit' %}Booked shipments show here until delivery.{% elif tab == 'invoice' %}Delivered orders appear here with the SAP billing document.{% else %}Submitted invoices show here.{% endif %}</span></div></div>
 {% else %}<div class="tw"><table class="dt">

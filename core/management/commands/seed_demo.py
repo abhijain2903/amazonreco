@@ -57,6 +57,8 @@ class Command(BaseCommand):
         self.now = timezone.now().replace(second=0, microsecond=0)
         with transaction.atomic():
             ensure_rules()
+            from core.workcal import ensure_fixed_holidays
+            ensure_fixed_holidays()
             ensure_connectors()
             self.users()
             self.catalog()

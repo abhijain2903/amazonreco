@@ -1,11 +1,17 @@
 {% extends "records/_drawer.html" %}
 {% block narrow %}narrow{% endblock %}{% block type %}Dispute{% endblock %}{% block title %}{{ d.case_no }}{% endblock %}
-{% block chip %}{% if d.status == 'open' %}{% chip "Open" "warn" %}{% elif d.status == 'submitted' %}{% chip "With Amazon" "info" %}{% elif d.status == 'won' %}{% chip "Won" "ok" %}{% else %}{% chip "Lost" "bad" %}{% endif %}{% endblock %}
+{% block chip %}{% if d.status == 'open' %}{% chip "Open" "warn" %}{% elif d.status == 'submitted' %}{% chip "With Amazon" "info" %}{% elif d.status == 'won' %}{% if d.recovered_h is not None and d.recovered_h < d.amount_h %}{% chip "Part won" "ok" %}{% else %}{% chip "Won" "ok" %}{% endif %}{% else %}{% chip "Lost" "bad" %}{% endif %}{% endblock %}
 {% block body %}
 <div class="kv2"><div><span>Type</span><b>{{ d.get_type_display }}</b></div><div><span>Amount</span><b>{{ d.amount_h|sar }}</b></div><div><span>Reference</span><b class="mono">{{ d.ref }}</b></div><div><span>PO / promotion</span><b class="mono">{% if d.po %}{{ d.po.po_no }}{% elif d.promotion %}{{ d.promotion.mecl_ref }}{% else %}—{% endif %}</b></div><div><span>Opened</span><b>{{ d.created_at|fd }}</b></div><div><span>Follow up by</span><b>{{ d.due|fd }}</b></div></div>
 <div class="field"><label>Note</label><p>{{ d.note|default:"—" }}</p></div>
-<div class="field"><label>Evidence</label><div class="row">{% for e in d.evidence.all %}{% if e.file %}<a class="pill-note" href="{{ e.file.url }}" hx-boost="false">{% icon 'file' %}{{ e.filename }}</a>{% else %}<span class="pill-note">{% icon 'file' %}{{ e.filename }}</span>{% endif %}{% empty %}<span class="faint">None</span>{% endfor %}</div></div>
+{% if d.amazon_case_id or d.recovered_h is not None %}<div class="kv2">{% if d.amazon_case_id %}<div><span>Amazon case ID</span><b class="mono">{{ d.amazon_case_id }}</b></div>{% endif %}{% if d.recovered_h is not None %}<div><span>Recovered</span><b>{{ d.recovered_h|sar }}{% if d.recovered_h < d.amount_h %} <span class="small muted">of {{ d.amount_h|sar }}</span>{% endif %}</b></div>{% endif %}</div>{% endif %}
+<div class="field"><label>Evidence</label><div class="row">{% for e in d.evidence.all %}{% if e.file %}<a class="pill-note" href="/attachments/evidence/{{ e.pk }}/" hx-boost="false">{% icon 'file' %}{{ e.filename }}</a>{% else %}<span class="pill-note">{% icon 'file' %}{{ e.filename }}</span>{% endif %}{% empty %}<span class="faint">None</span>{% endfor %}</div></div>
 <h3 class="sect-h">Timeline</h3>{% include "partials/timeline.html" %}
 {% endblock %}
-{% block foot %}{% if d.status == 'open' %}<button class="btn pri" hx-post="/pay/disputes/{{ d.case_no }}/submitted/" hx-swap="none" {% perm 'dispute' %}>Mark submitted to Amazon</button>
-{% elif d.status == 'submitted' %}<button class="btn danger" hx-post="/pay/disputes/{{ d.case_no }}/lost/" hx-swap="none" {% perm 'dispute' %}>Mark lost</button><button class="btn pri" hx-post="/pay/disputes/{{ d.case_no }}/won/" hx-swap="none" {% perm 'dispute' %}>{% icon 'check' %}<span>Mark won</span></button>{% endif %}{% endblock %}
+{% block foot %}{% if d.status == 'open' %}<form class="row" style="flex-wrap:nowrap;gap:6px" hx-post="/pay/disputes/{{ d.case_no }}/submitted/" hx-swap="none">
+  <input class="inp mono" name="case_id" placeholder="Amazon case ID" aria-label="Amazon case ID" style="width:160px" {% if not caps.dispute %}disabled{% endif %}>
+  <button class="btn pri" type="submit" {% perm 'dispute' %}>Mark submitted to Amazon</button></form>
+{% elif d.status == 'submitted' %}<button class="btn danger" hx-post="/pay/disputes/{{ d.case_no }}/lost/" hx-swap="none" {% perm 'dispute' %}>Mark lost</button>
+<form class="row" style="flex-wrap:nowrap;gap:6px" hx-post="/pay/disputes/{{ d.case_no }}/won/" hx-swap="none">
+  <input class="inp" name="recovered" type="number" step="0.01" min="0.01" value="{{ d.amount_h|n2|cut:',' }}" aria-label="Amount recovered SAR" style="width:120px" {% if not caps.dispute %}disabled{% endif %}>
+  <button class="btn pri" type="submit" {% perm 'dispute' %}>{% icon 'check' %}<span>Mark won</span></button></form>{% endif %}{% endblock %}

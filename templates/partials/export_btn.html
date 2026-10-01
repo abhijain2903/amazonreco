@@ -1,0 +1,1 @@
+<a class="btn" href="?{% if request.GET %}{{ request.GET.urlencode }}&amp;{% endif %}export=xlsx" hx-boost="false" download title="Download this list as an Excel file">{% icon 'download' %}<span>Export</span></a>

@@ -16,7 +16,7 @@ from debitnotes.services import evaluate
 from rules.services import get_cfg
 
 from . import services as svc
-from .models import STAGE_LABELS, STAGE_TONES, Promotion
+from .models import PROMO_TYPES, STAGE_LABELS, STAGE_TONES, Promotion
 from .services import get_promo, stage_of, support_h
 
 GROUPS = [("all", "All", None), ("pre", "Draft & submitted", ["draft", "submitted", "rejected"]), ("run", "Approved & live", ["approved", "live"]),
@@ -51,6 +51,11 @@ def promo_list(request):
             dict(l="Waiting for DN", v=cnt(["waiting_dn", "dn_overdue"]), s=f"{cnt(['dn_overdue'])} overdue", url="?tab=after", alert=cnt(["dn_overdue"]) > 0),
             dict(l="DN to validate", v=cnt(["dn_received"]), s="Debit notes received", url="/dns/?tab=todo"),
             dict(l="Support committed", v=f"{round(sum(p.support for p in committed) / 100):,}", s="SAR · approved and live", url="?tab=run")]
+    from core.exports import sar, wants_export, xlsx
+    if wants_export(request):
+        return xlsx(f"Promotions_{tab}", ["MECL ref", "Promotion", "Type", "Category", "Start", "End", "Agreement #", "Support SAR", "DN due", "Stage", "Owner"],
+                    [[p.mecl_ref, p.name, p.get_promo_type_display(), p.category, p.start, p.end, p.agreement_no or "", sar(p.support), p.dn_due, STAGE_LABELS[p.st],
+                      p.owner_name] for p in rows])
     ctx = dict(rows=rows, tab=tab, view=view, cat=cat, q=q, kpis=kpis, cats=list(CATEGORY_NAMES),
                tabs=[dict(id=k, label=l, count=counts[k]) for k, l, _ in GROUPS])
     if view == "board":
@@ -104,16 +109,17 @@ def dn_panel(dn, p):
 def drawer(request, ref):
     p = get_promo(ref)
     st = stage_of(p)
-    tab = htmx.pick(request, "tab", ["models", "dn", "claim", "timeline", "notes"], "models")
+    tab = htmx.pick(request, "tab", ["models", "dn", "claim", "timeline", "notes", "docs"], "models")
     dn = DebitNote.objects.filter(agreement_no=p.agreement_no).first() if p.agreement_no else None
     c = Claim.objects.filter(promotion=p).first()
     base = f"/records/promo/{p.mecl_ref}/"
-    ctx = dict(p=p, st=st, tab=tab, base=base, url=f"{base}?tab={tab}", dn=dn, c=c, support=support_h(p), lines=list(p.lines.select_related("sku")),
+    ctx = dict(p=p, st=st, tab=tab, base=base, url=f"{base}?tab={tab}", dn=dn, c=c, cns=list(c.credit_notes.all()) if c else [], support=support_h(p), lines=list(p.lines.select_related("sku")),
                steps=_steps(p, st, dn, c),
                chain=[dict(l="MECL ref", v=p.mecl_ref), dict(l="Amazon agreement", v=p.agreement_no), dict(l="Debit note", v=dn and dn.dn_no, tab="dn"),
                       dict(l="Claim", v=c and c.claim_no, tab="claim"), dict(l="Credit note", v=c and c.cn_no, tab="claim")],
                dtabs=[dict(id="models", label="Models", n=p.lines.count()), dict(id="dn", label="Debit note check"), dict(id="claim", label="Claim & credit note"),
-                      dict(id="timeline", label="Timeline"), dict(id="notes", label="Notes", n=Note.objects.filter(entity="promo", entity_id=p.mecl_ref).count())])
+                      dict(id="timeline", label="Timeline"), dict(id="notes", label="Notes", n=Note.objects.filter(entity="promo", entity_id=p.mecl_ref).count()),
+                      dict(id="docs", label="Documents")])
     lines = ctx["lines"]
     ctx.update(exp_units=sum(l.expected_units for l in lines), missing_sold=any(l.sold_units is None for l in lines),
                sold_units=None if any(l.sold_units is None for l in lines) else sum(l.sold_units for l in lines),
@@ -131,6 +137,9 @@ def drawer(request, ref):
         ctx["events"] = AuditEvent.objects.filter(qq).order_by("-at", "-id")
     if tab == "notes":
         ctx.update(notes=Note.objects.filter(entity="promo", entity_id=p.mecl_ref), entity="promo", key=p.mecl_ref)
+    if tab == "docs":
+        from core.views import documents
+        ctx.update(docs=documents("promo", p.mecl_ref), doc_entity="promo", doc_key=p.mecl_ref)
     return render(request, "records/promo.html", ctx)
 
 
@@ -184,11 +193,12 @@ def wizard(request):
     if request.method == "GET" or not w:
         today = timezone.localdate()
         w = dict(step=1, name="", cat="DI", start=(today + timedelta(days=14)).isoformat(), end=(today + timedelta(days=21)).isoformat(),
-                 owner="Product team", lines=[], err="")
+                 owner="Product team", ptype="price_discount", lines=[], err="")
     else:
         act = request.POST.get("act", "next")
         w["err"] = ""
-        for f in ("name", "cat", "start", "end", "owner"):
+        w.setdefault("ptype", "price_discount")
+        for f in ("name", "cat", "start", "end", "owner", "ptype"):
             if f in request.POST:
                 if f == "cat" and request.POST[f] != w["cat"]:
                     w["lines"] = []
@@ -221,7 +231,8 @@ def wizard(request):
         elif act in ("draft", "submit"):
             skus = {s.sku_code: s for s in Sku.objects.filter(sku_code__in=[l["sku"] for l in w["lines"]])}
             p = svc.create_promotion(request.user, w["name"], w["cat"], _parse_day(w["start"]), _parse_day(w["end"]).replace(hour=23, minute=59),
-                                     w["owner"], [(skus[l["sku"]], to_h(l["support"]), int(l["expected"])) for l in w["lines"]], source="the hub")
+                                     w["owner"], [(skus[l["sku"]], to_h(l["support"]), int(l["expected"])) for l in w["lines"]], source="the hub",
+                                     promo_type=w.get("ptype"))
             request.session.pop("promo_wiz", None)
             url = f"/records/promo/{p.mecl_ref}/"
             if act == "submit":
@@ -235,6 +246,7 @@ def wizard(request):
     opts = Sku.objects.filter(category=w["cat"]).exclude(sku_code__in=[l["sku"] for l in w["lines"]])
     warn = [l for l in lines if l["support"] * 100 > l["s"].cost_h * 0.25]
     end = _parse_day(w["end"]) if w["end"] else None
-    return render(request, "dialogs/promo_wizard.html", dict(w=w, lines=lines, total=total, exp_total=sum(l["expected"] for l in lines), opts=opts, cats=CATEGORY_NAMES.items(), warn=warn,
+    return render(request, "dialogs/promo_wizard.html", dict(w=w, lines=lines, total=total, exp_total=sum(l["expected"] for l in lines), opts=opts, cats=CATEGORY_NAMES.items(), warn=warn, ptypes=PROMO_TYPES,
+                  ptype_name=dict(PROMO_TYPES).get(w.get("ptype"), ""),
                   dn_due=end + timedelta(days=30) if end else None, start=_parse_day(w["start"]) if w["start"] else None, end=end,
                   steps=["Basics", "Models & support", "Review"]))

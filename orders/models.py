@@ -22,6 +22,7 @@ class PurchaseOrder(Base):
                              choices=[(s, STAGE_LABELS[s]) for s in STAGES + ["rejected"]])
     confirmed_at = models.DateTimeField(null=True, blank=True)
     booked_at = models.DateTimeField(null=True, blank=True)
+    credit_hold = models.CharField(max_length=200, blank=True, help_text="Why credit control is holding the order")
     released_at = models.DateTimeField(null=True, blank=True)
     delivered_at = models.DateTimeField(null=True, blank=True)
     paid_at = models.DateTimeField(null=True, blank=True)

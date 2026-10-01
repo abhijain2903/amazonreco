@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="ph"><div><h1>Payments &amp; Disputes</h1><p>Match what Amazon paid with what ME invoiced. Short payments become dispute cases with a reason and evidence.</p></div>
-<div class="ph-act"><button class="btn" hx-get="/uploads/new/?type=U6" hx-target="#modal" {% perm 'upload' %}>{% icon 'upload' %}<span>Upload remittance</span></button></div></div>
+<div class="ph-act">{% include "partials/export_btn.html" %}<button class="btn" hx-get="/uploads/new/?type=U6" hx-target="#modal" {% perm 'upload' %}>{% icon 'upload' %}<span>Upload remittance</span></button></div></div>
 <div class="kpis">{% for k in kpis %}<a class="kpi {% if k.alert %}alert{% endif %}" href="{{ k.url }}"><span class="kpi-l">{{ k.l }}</span><span class="kpi-v">{{ k.v }}</span><span class="kpi-s">{{ k.s }}</span></a>{% endfor %}</div>
 <div class="tabs" role="tablist">{% for t in tabs %}<a class="tab {% if t.id == tab %}on{% endif %}" href="?tab={{ t.id }}">{{ t.label }}<span class="ct">{{ t.count }}</span></a>{% endfor %}</div>
 {% if tab == 'short' %}

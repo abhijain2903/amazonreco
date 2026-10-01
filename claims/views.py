@@ -38,6 +38,14 @@ def claim_list(request):
             dict(l="Recovered, all time", v=sar(sum(c.cn_h or 0 for c in cl)), s="SAR from credit notes", url="?tab=closed")]
     lists = {"sent": sent, "shortfall": sh, "closed": cl}
     rows = sorted(lists.get(tab, []), key=lambda c: c.sent_at, reverse=True)
+    from core.exports import sar, wants_export, xlsx
+    if wants_export(request):
+        if tab == "toclaim":
+            return xlsx("Claims_to_claim", ["MECL ref", "Promotion", "Category", "DN", "Claim SAR"],
+                        [[p.mecl_ref, p.name, p.category, p.dn.dn_no if p.dn else "", sar(p.dn.approved_h) if p.dn else None] for p in to_claim])
+        return xlsx(f"Claims_{tab}", ["Claim", "MECL ref", "Category", "Sent", "Claim SAR", "Credit note", "CN SAR", "Gap SAR", "Status"],
+                    [[c.claim_no, c.promotion.mecl_ref, c.promotion.category, c.sent_at, sar(c.amount_h), c.cn_no, sar(c.cn_h), sar(c.gap_h),
+                      c.get_status_display()] for c in rows])
     counts = {"toclaim": len(to_claim), "sent": len(sent), "shortfall": len(sh), "closed": len(cl)}
     return render(request, "pages/claims.html", dict(tab=tab, kpis=kpis, to_claim=to_claim, rows=rows,
                   tabs=[dict(id=k, label=l, count=counts[k]) for k, l in TABS]))
@@ -56,7 +64,8 @@ def cn(request, claim_no):
         if c.status == "closed":
             return htmx.done(request, f"Credit note matches. {c.promotion.mecl_ref} closed", close_modal=True)
         return htmx.done(request, f"Credit note is {c.gap_h / 100:,.0f} SAR short. Flagged for follow-up", "bad", close_modal=True)
-    return render(request, "dialogs/cn.html", dict(c=c, next_cn=f"CN-{peek_number('credit_note', 552010)}", today=timezone.localdate().isoformat(),
+    left = c.amount_h - (c.cn_h or 0)
+    return render(request, "dialogs/cn.html", dict(c=c, left_h=max(left, 0), next_cn=f"CN-{peek_number('credit_note', 552010)}", today=timezone.localdate().isoformat(),
                                                     tol=get_cfg().tol_h()))
 
 

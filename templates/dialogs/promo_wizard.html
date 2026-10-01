@@ -8,6 +8,7 @@
 {% if w.step == 1 %}
   <div class="field"><label for="w-name">Promotion name</label><input class="inp" id="w-name" name="name" value="{{ w.name }}" placeholder="e.g. Mega deals week · Wireless headphones" autofocus></div>
   <div class="fgrid">
+    <div class="field"><label for="w-ptype">Promotion type</label><select class="sel" id="w-ptype" name="ptype">{% for c, n in ptypes %}<option value="{{ c }}" {% if w.ptype == c %}selected{% endif %}>{{ n }}</option>{% endfor %}</select></div>
     <div class="field"><label for="w-cat">Category</label><select class="sel" id="w-cat" name="cat">{% for c, n in cats %}<option value="{{ c }}" {% if w.cat == c %}selected{% endif %}>{{ c }} · {{ n }}</option>{% endfor %}</select></div>
     <div class="field"><label for="w-start">Start date</label><input class="inp" type="date" id="w-start" name="start" value="{{ w.start }}"></div>
     <div class="field"><label for="w-end">End date</label><input class="inp" type="date" id="w-end" name="end" value="{{ w.end }}"></div>
@@ -25,7 +26,7 @@
   <tfoot><tr><td>Total</td><td></td><td></td><td class="num">{{ exp_total|num }}</td><td class="num">{{ total|floatformat:"0g" }}</td><td></td></tr></tfoot></table></div>
   {% else %}<div class="empty"><div class="ei">{% icon 'tag' %}</div><b>No models yet</b><span>Add the models this promotion covers.</span></div>{% endif %}
 {% else %}
-  <div class="kv2"><div><span>Promotion</span><b>{{ w.name }}</b></div><div><span>Category</span><b>{% cat w.cat %}</b></div><div><span>Runs</span><b>{{ start|fd }} – {{ end|fd }}</b></div><div><span>DN due</span><b>{{ dn_due|fd }}</b></div><div><span>Total support</span><b>SAR {{ total|floatformat:"0g" }}</b></div></div>
+  <div class="kv2"><div><span>Promotion</span><b>{{ w.name }}</b></div><div><span>Type</span><b>{{ ptype_name }}</b></div><div><span>Category</span><b>{% cat w.cat %}</b></div><div><span>Runs</span><b>{{ start|fd }} – {{ end|fd }}</b></div><div><span>DN due</span><b>{{ dn_due|fd }}</b></div><div><span>Total support</span><b>SAR {{ total|floatformat:"0g" }}</b></div></div>
   {% if warn %}<div class="banner warn">{% icon 'alert' %}<span class="t">{{ warn|length }} model{% if warn|length > 1 %}s have{% else %} has{% endif %} support above 25% of cost. Check before submitting.</span></div>
   {% else %}<div class="banner ok">{% icon 'check' %}<span class="t">Support per unit looks normal for every model.</span></div>{% endif %}
   <h3 class="sect-h">Amazon submission format (preview)</h3>

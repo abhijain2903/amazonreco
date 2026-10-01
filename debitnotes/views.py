@@ -29,6 +29,11 @@ def dn_list(request):
         rows.append(dict(d=d, e=e, label=TONE[e["status"]][0], tone=TONE[e["status"]][1],
                          var_bad=e["variance_h"] is not None and abs(e["variance_h"]) > tol))
     rows.sort(key=lambda r: r["d"].dn_date, reverse=True)
+    from core.exports import sar, wants_export, xlsx
+    if wants_export(request):
+        return xlsx(f"DebitNotes_{tab}", ["DN", "Agreement #", "Promotion", "DN date", "Charged SAR", "Expected SAR", "Variance SAR", "Status"],
+                    [[r["d"].dn_no, r["d"].agreement_no, r["e"]["promo"].mecl_ref if r["e"]["promo"] else "", r["d"].dn_date,
+                      sar(r["e"]["charged_h"]), sar(r["e"]["expected_h"]), sar(r["e"]["variance_h"]), r["label"]] for r in rows])
     counts = {s: sum(1 for _, e in E if e["status"] == s) for _, _, s in TABS}
     return render(request, "pages/dns.html", dict(tab=tab, rows=rows, tabs=[dict(id=k, label=l, count=counts[s]) for k, l, s in TABS]))
 

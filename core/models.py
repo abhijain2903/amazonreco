@@ -87,3 +87,29 @@ class GeneratedFile(Base):
 
     class Meta:
         ordering = ["-created_at"]
+
+
+class Attachment(Base):
+    """A document someone attached to a record: proof of delivery, evidence, anything else the team needs again."""
+
+    KINDS = [("pod", "Proof of delivery"), ("evidence", "Evidence"), ("other", "Other")]
+    entity = models.CharField(max_length=30)
+    entity_id = models.CharField(max_length=64)
+    kind = models.CharField(max_length=10, choices=KINDS, default="other")
+    filename = models.CharField(max_length=200)
+    file = models.FileField(upload_to="docs/%Y/%m/")
+    uploaded_by_name = models.CharField(max_length=120)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["entity", "entity_id"])]
+
+
+class Holiday(Base):
+    """A public holiday: no working time for internal deadlines (book, release, invoice, chase …)."""
+
+    day = models.DateField(unique=True)
+    name = models.CharField(max_length=80)
+
+    class Meta:
+        ordering = ["day"]

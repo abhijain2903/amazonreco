@@ -45,7 +45,8 @@ def new_ref():
     return f"MECL-PR-2026-{next_number('promotion', 137):04d}"
 
 
-def create_promotion(user, name, category, start, end, owner, lines, *, source="the hub", at=None, name_override=None):
+def create_promotion(user, name, category, start, end, owner, lines, *, source="the hub", at=None, name_override=None,
+                     promo_type="price_discount"):
     """lines: [(sku, support_h, expected_units)]."""
     if not name.strip():
         raise CommandError("Give the promotion a name.")
@@ -55,7 +56,7 @@ def create_promotion(user, name, category, start, end, owner, lines, *, source="
         raise CommandError("Add at least one model.")
     if any(s <= 0 or u <= 0 for _, s, u in lines):
         raise CommandError("Every model needs support per unit and expected units above 0.")
-    p = Promotion.objects.create(mecl_ref=new_ref(), name=name.strip(), category=category, start=start, end=end,
+    p = Promotion.objects.create(mecl_ref=new_ref(), name=name.strip(), category=category, promo_type=promo_type or "price_discount", start=start, end=end,
                                  dn_due=end + timedelta(days=30), owner_name=owner, stage="draft")
     for sku, s, u in lines:
         p.lines.create(sku=sku, support_h=s, expected_units=u)

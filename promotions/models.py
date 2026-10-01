@@ -3,6 +3,9 @@ from django.db import models
 from catalog.models import CATEGORIES, Sku
 from core.models import Base
 
+PROMO_TYPES = [("price_discount", "Price discount"), ("deal", "Deal (Lightning / Best Deal)"), ("coupon", "Coupon"),
+               ("prime_day", "Prime Day / event"), ("price_protection", "Price protection"), ("other", "Other")]
+
 STORED_STAGES = ["draft", "submitted", "rejected", "approved", "dn_validated", "claimed", "cn_shortfall", "closed"]
 STAGE_LABELS = {"draft": "Draft", "submitted": "Submitted", "rejected": "Rejected by Amazon", "approved": "Approved",
                 "live": "Live", "waiting_dn": "Waiting for DN", "dn_overdue": "DN overdue",
@@ -19,6 +22,7 @@ class Promotion(Base):
                                     help_text="Amazon agreement number (rule R8: unique)")
     name = models.CharField(max_length=160)
     category = models.CharField(max_length=8, choices=CATEGORIES)
+    promo_type = models.CharField(max_length=20, choices=PROMO_TYPES, default="price_discount")
     start = models.DateTimeField()
     end = models.DateTimeField()
     dn_due = models.DateTimeField()
