@@ -116,27 +116,47 @@ def dn_overdue(dn_due, now, cfg: Cfg):
     return cfg.on("R9") and now > dn_due + timedelta(days=float(cfg.p("R9", "days")))
 
 
-def dn_check(dn_lines, promo_lines, dn_date, promo_end, cfg: Cfg):
+def dn_check(dn_lines, promo_lines, dn_date, promo_end, cfg: Cfg, *, prior=None, fees_h=None, prior_fees_h=0,
+             instalments=False, promo_start=None):
     """R10. Compare a debit note with its promotion agreement.
 
-    dn_lines: [{"sku": key, "units": int, "rate_h": int}]
+    dn_lines: [{"sku": key, "units": int, "rate_h": int}]; sku None is a fixed-fee line (units 1, rate = the fee).
     promo_lines: {sku key: {"support_h": int, "sold": int|None}}
     Expected = units sold (from the Amazon sales report, else the DN units) x agreed support.
+    Several debit notes for one agreement: prior = {sku: units already billed on earlier debit notes}; a debit note
+    can only bill what is left. A part bill (an instalment, or a DN after an earlier one) is expected to cover only
+    the units it bills, so only over-billing is flagged. fees_h: the agreed fixed fees (less prior_fees_h already billed).
     """
+    prior = prior or {}
     out, charged, expected = [], 0, 0
+    fee_left = None if fees_h is None else max(0, fees_h - prior_fees_h)
     for l in dn_lines:
-        pl = promo_lines.get(l["sku"])
         ch = l["units"] * l["rate_h"]
+        if l["sku"] is None:
+            left = fee_left or 0
+            exp = min(ch, left) if instalments else left
+            if fee_left is not None:
+                fee_left = max(0, fee_left - exp)
+            out.append({**l, "charged_h": ch, "expected_h": exp, "gap_h": ch - exp, "sold": None, "left": None, "fee": True,
+                        "support_h": None, "in_promo": fees_h is not None, "rate_ok": fees_h is not None and ch <= left, "units_ok": True})
+            charged += ch
+            expected += exp
+            continue
+        pl = promo_lines.get(l["sku"])
         sold = pl["sold"] if pl else None
-        exp = (sold if sold is not None else l["units"]) * pl["support_h"] if pl else 0
-        out.append({**l, "charged_h": ch, "expected_h": exp, "gap_h": ch - exp, "sold": sold,
+        left = None if sold is None else max(0, sold - prior.get(l["sku"], 0))
+        part = instalments or prior.get(l["sku"], 0) > 0
+        units = l["units"] if left is None else (min(l["units"], left) if part else left)
+        exp = units * pl["support_h"] if pl else 0
+        out.append({**l, "charged_h": ch, "expected_h": exp, "gap_h": ch - exp, "sold": sold, "left": left, "fee": False,
+                    "billed_before": prior.get(l["sku"], 0),
                     "support_h": pl["support_h"] if pl else None, "in_promo": bool(pl),
                     "rate_ok": bool(pl) and l["rate_h"] == pl["support_h"],
-                    "units_ok": bool(pl) and (sold is None or l["units"] <= sold)})
+                    "units_ok": bool(pl) and (left is None or l["units"] <= left)})
         charged += ch
         expected += exp
     variance = charged - expected
-    date_ok = dn_date >= promo_end
+    date_ok = dn_date >= (promo_start if instalments and promo_start else promo_end)
     ok = (not cfg.on("R10")) or (abs(variance) <= cfg.tol_h() and all(x["in_promo"] and x["rate_ok"] for x in out) and date_ok)
     return {"lines": out, "charged_h": charged, "expected_h": expected, "variance_h": variance, "date_ok": date_ok, "ok": ok}
 
