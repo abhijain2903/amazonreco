@@ -5,6 +5,7 @@
     <div class="dh-top">
       <div style="flex:1;min-width:0"><div class="dh-type">{% block type %}{% endblock %}</div>
         <h2><span class="mono" style="font-size:19px">{% block title %}{% endblock %}</span>{% block chip %}{% endblock %}</h2></div>
+      {% if owner_entity %}{% include "partials/owner.html" %}{% endif %}
       <button type="button" class="icon-btn" data-close="drawer" aria-label="Close">{% icon 'x' %}</button>
     </div>
     {% block head %}<div style="height:12px"></div>{% endblock %}

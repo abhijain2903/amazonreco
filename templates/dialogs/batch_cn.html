@@ -1,0 +1,13 @@
+{% extends "dialogs/_modal.html" %}
+{% block size %}sm{% endblock %}{% block label %}Credit note for a batch{% endblock %}
+{% block mtitle %}Credit note for batch {{ batch }}{% endblock %}{% block msub %}<p>{{ cs|length }} claims · {{ owed|sar }} still owed</p>{% endblock %}
+{% block form_open %}<form hx-post="/claims/batch/{{ batch }}/cn/" hx-swap="none">{% endblock %}
+{% block mbody %}
+<div class="fgrid"><div class="field"><label for="bc-no">Credit note #</label><input class="inp" id="bc-no" name="cn_no" value="{{ next_cn }}" required></div>
+<div class="field"><label for="bc-amt">Amount SAR</label><input class="inp" type="number" step="0.01" min="0.01" id="bc-amt" name="amount" value="{{ owed|n2|cut:',' }}" required></div>
+<div class="field"><label for="bc-date">Date</label><input class="inp" type="date" id="bc-date" name="date" value="{{ today }}"></div></div>
+<div class="tw"><table class="dt compact"><thead><tr><th>Claim</th><th>Promotion</th><th class="num">Claim SAR</th><th>Status</th></tr></thead><tbody>{% for c in cs %}<tr><td class="mono">{{ c.claim_no }}</td><td class="mono">{{ c.promotion.mecl_ref }}</td><td class="num">{{ c.amount_h|n }}</td><td>{{ c.get_status_display }}</td></tr>{% endfor %}</tbody></table></div>
+<p class="small muted">The amount is split across the open claims in proportion to what each is owed; each claim is then checked (R11).</p>
+{% endblock %}
+{% block mfoot %}<span class="hint"></span><button type="button" class="btn" data-close="modal">Cancel</button><button class="btn pri" type="submit">Record credit note</button>{% endblock %}
+{% block form_close %}</form>{% endblock %}

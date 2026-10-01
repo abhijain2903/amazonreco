@@ -1,0 +1,4 @@
+{# Owner picker in a drawer header. Context: owner, people, owner_entity, owner_key #}
+<form class="owner" hx-post="/assign/{{ owner_entity }}/{{ owner_key }}/" hx-trigger="change" hx-swap="none" title="Who owns this record. Unassigned records belong to the role.">
+  {% icon 'user' %}<select class="sel sm" name="user" aria-label="Owner"><option value="">Unassigned (the role)</option>{% for u in people %}<option value="{{ u.username }}" {% if owner and u.pk == owner.pk %}selected{% endif %}>{{ u.name }} · {{ u.role_title }}</option>{% endfor %}</select>
+</form>

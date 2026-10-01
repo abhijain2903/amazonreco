@@ -19,10 +19,15 @@ def get_claim(no, lock=False):
         raise CommandError(f"Claim {no} was not found.")
 
 
-def _make_claim(p, at, user=None, name=None):
-    dn = DebitNote.objects.filter(agreement_no=p.agreement_no, validated=True).first()
+def unclaimed_dns(p):
+    """Validated debit notes on the promotion's agreement that have no claim yet (one claim per debit note)."""
+    return list(DebitNote.objects.filter(agreement_no=p.agreement_no, validated=True, claims__isnull=True).order_by("dn_date", "created_at"))
+
+
+def _make_claim(p, at, user=None, name=None, dn=None, batch_no=""):
+    dn = dn or unclaimed_dns(p)[0]
     c = Claim.objects.create(claim_no=f"CLM-2026-{next_number('claim', 88):04d}", promotion=p, debit_note=dn,
-                             amount_h=dn.approved_h, sent_at=at)
+                             amount_h=dn.approved_h, sent_at=at, batch_no=batch_no)
     p.stage = "claimed"
     p.bump()
     p.save()
@@ -32,18 +37,68 @@ def _make_claim(p, at, user=None, name=None):
     return c
 
 
+CLAIM_HEAD = ["claim_no", "mecl_ref", "agreement_no", "dn_no", "model", "units", "rate_sar", "amount_sar"]
+
+
+def claim_rows(c):
+    p, dn = c.promotion, c.debit_note
+    return [[c.claim_no, p.mecl_ref, p.agreement_no, dn.dn_no, l.sku.model_no if l.sku else l.label, l.units, f"{l.rate_h / 100:.2f}",
+             f"{l.units * l.rate_h / 100:.2f}"] for l in dn.lines.select_related("sku")]
+
+
 @transaction.atomic
 def generate_claim(user, ref):
+    """One claim per validated, unclaimed debit note on the promotion (instalments get a claim each)."""
     require(user, "promo")
     p = get_promo(ref, lock=True)
-    if stage_of(p) != "dn_validated":
+    dns = unclaimed_dns(p)
+    if stage_of(p) != "dn_validated" or not dns:
         raise CommandError("A claim is created after the debit note is validated.")
-    c = _make_claim(p, timezone.now(), user)
-    dn = c.debit_note
-    rows = [["claim_no", "mecl_ref", "agreement_no", "dn_no", "model", "units", "rate_sar", "amount_sar"]] + [
-        [c.claim_no, p.mecl_ref, p.agreement_no, dn.dn_no, l.sku.model_no, l.units, f"{l.rate_h / 100:.2f}",
-         f"{l.units * l.rate_h / 100:.2f}"] for l in dn.lines.select_related("sku")]
-    return c, save_file("claim", f"Claim_{c.claim_no}.csv", rows, "promotion", p.mecl_ref)
+    now = timezone.now()
+    cs = [_make_claim(p, now, user, dn=dn) for dn in dns]
+    rows = [CLAIM_HEAD] + [r for c in cs for r in claim_rows(c)]
+    return cs[-1], save_file("claim", f"Claim_{cs[-1].claim_no}.csv", rows, "promotion", p.mecl_ref)
+
+
+@transaction.atomic
+def generate_batch(user, refs):
+    """One claim file for several promotions (e.g. a month's promotions for one category / product team)."""
+    require(user, "promo")
+    ps = [get_promo(r, lock=True) for r in dict.fromkeys(refs)]
+    ps = [p for p in ps if stage_of(p) == "dn_validated" and unclaimed_dns(p)]
+    if len(ps) < 2:
+        raise CommandError("Pick two or more promotions with a validated debit note.")
+    batch = f"CLB-2026-{next_number('claim_batch', 10):04d}"
+    now = timezone.now()
+    cs = [_make_claim(p, now, user, dn=dn, batch_no=batch) for p in ps for dn in unclaimed_dns(p)]
+    rows = [CLAIM_HEAD] + [r for c in cs for r in claim_rows(c)]
+    total = sum(c.amount_h for c in cs)
+    f = save_file("claim", f"Claim_batch_{batch}.csv", rows, "promotion", ps[0].mecl_ref)
+    for p in ps[1:]:
+        save_file("claim", f"Claim_batch_{batch}.csv", rows, "promotion", p.mecl_ref)
+    for c in cs:
+        audit("claim", c.claim_no, f"Sent in batch {batch} ({len(cs)} claims, {fmt_sar(total)})", user, action="batch")
+    return batch, cs, f
+
+
+@transaction.atomic
+def record_batch_cn(user, batch_no, cn_no, cn_h, cn_date=None):
+    """One credit note for a whole batch: split across its open claims in proportion to what is still owed on each
+    (the last takes the rounding), then each claim is checked (R11)."""
+    require(user, "cn")
+    cs = list(Claim.objects.select_for_update().filter(batch_no=batch_no, status__in=["sent", "shortfall"]).select_related("promotion").order_by("claim_no"))
+    if not cs:
+        raise CommandError(f"Batch {batch_no} has no claims waiting for a credit note.")
+    if not (cn_no or "").strip() or not cn_h or cn_h <= 0:
+        raise CommandError("Enter the credit note number and amount.")
+    owed = [c.amount_h - (c.cn_h or 0) for c in cs]
+    total = sum(owed)
+    left, at = cn_h, timezone.now()
+    for i, c in enumerate(cs):
+        part = left if i == len(cs) - 1 else round(cn_h * owed[i] / total)
+        left -= part
+        _record_cn(c, cn_no.strip(), part, cn_date or at, at, user)
+    return cs
 
 
 def _record_cn(c, cn_no, cn_h, cn_date, at, user=None, name=None):
@@ -56,10 +111,11 @@ def _record_cn(c, cn_no, cn_h, cn_date, at, user=None, name=None):
     several = c.credit_notes.count() > 1
     c.cn_no, c.cn_h, c.cn_date = cn_no, total, cn_date
     p = c.promotion
+    others_open = p.claims.exclude(pk=c.pk).filter(status__in=["sent", "shortfall"]).exists()
     what = f"Credit notes now total {fmt_sar(total)}" if several else f"Credit note {cn_no} for {fmt_sar(cn_h)}"
     if engine.cn_check(c.amount_h, total, get_cfg()) == "closed":
-        c.status, p.stage = "closed", "closed"
-        text = f"{what}, matching the claim. Promotion closed"
+        c.status, p.stage = "closed", "claimed" if others_open else "closed"
+        text = f"{what}, matching claim {c.claim_no}." + (" Other claims on this promotion are still open" if others_open else " Promotion closed")
     else:
         c.status, p.stage = "shortfall", "cn_shortfall"
         text = (f"{what}, {fmt_sar(c.amount_h - total)} short of the claim" if total < c.amount_h
@@ -105,6 +161,7 @@ def write_off(user, claim_no):
     c.status = "written_off"
     c.save()
     p = c.promotion
-    p.stage = "closed"
-    p.save()
+    if not p.claims.exclude(pk=c.pk).filter(status__in=["sent", "shortfall"]).exists():
+        p.stage = "closed"
+        p.save()
     audit("promotion", p.mecl_ref, f"Closed with write-off of {fmt_sar(c.gap_h)}", user, action="write_off")

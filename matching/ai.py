@@ -36,7 +36,7 @@ CHOOSE_SCHEMA = {
 DEDUCTION_SCHEMA = {
     "type": "object",
     "properties": {
-        "type": {"type": "string", "enum": ["shortage", "price", "promo", "damage", "other"]},
+        "type": {"type": "string", "enum": ["shortage", "price", "promo", "damage", "chargeback", "returns", "coop", "other"]},
         "action": {"type": "string", "enum": ["dispute", "accept", "link_dn", "review"]},
         "confidence": {"type": "integer", "description": "0-100"},
         "rationale": {"type": "string"},

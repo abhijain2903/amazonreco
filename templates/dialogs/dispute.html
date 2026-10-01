@@ -3,10 +3,11 @@
 {% block form_open %}<form hx-post="/pay/{{ p.payment_no }}/dispute/" hx-encoding="multipart/form-data" hx-swap="none">{% endblock %}
 {% block mbody %}
 <div class="fgrid"><div class="field"><label for="ds-type">Reason</label><select class="sel" id="ds-type" name="type">{% for k, l in types %}<option value="{{ k }}" {% if k == guess %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></div>
+<div class="field"><label for="ds-sub">Chargeback type</label><select class="sel" id="ds-sub" name="subtype"><option value="">— chargebacks only —</option>{% for k, l in cb_types %}<option value="{{ k }}">{{ l }}</option>{% endfor %}</select></div>
 <div class="field"><label for="ds-amt">Amount SAR</label><input class="inp" type="number" step="0.01" id="ds-amt" name="amount" value="{{ p.deduction_h|n2|cut:',' }}"></div></div>
 <div class="field"><label for="ds-note">Note for Amazon</label><textarea class="inp" id="ds-note" name="note" rows="4">{{ s.extra.note }}</textarea>
 <span class="help">Drafted by {% if s.method == 'ai' %}AI ({{ s.ai_model }}){% else %}the matching rules{% endif %} from the deduction reason and ME's records. Check and edit before sending.</span></div>
-<div class="field"><label for="ds-file">Evidence</label><input type="file" id="ds-file" name="evidence" multiple class="inp" style="padding:5px"><span class="help">Proof of delivery, carrier receipt, price list.</span></div>
+<div class="field"><label for="ds-file">Evidence</label><input type="file" id="ds-file" name="evidence" multiple class="inp" style="padding:5px"><details class="help"><summary>What evidence Amazon expects, by reason</summary><ul class="small">{% for t, h in hints %}<li><b>{{ t }}:</b> {{ h }}</li>{% endfor %}</ul></details></div>
 {% endblock %}
 {% block mfoot %}<span class="hint">Follow-up reminder set for 14 days.</span><button type="button" class="btn" data-close="modal">Cancel</button><button class="btn pri" type="submit">Open dispute</button>{% endblock %}
 {% block form_close %}</form>{% endblock %}

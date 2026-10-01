@@ -8,7 +8,7 @@
 {% if not dn.validated %}<div class="banner warn">{% icon 'link' %}<span class="t"><b>Agreement # {{ dn.agreement_no }} is not in the tracker.</b> Usually a typo or a promotion that was never logged. Pick the promotion to link it to.</span></div>{% endif %}
 <div class="kv2"><div><span>Debit note</span><b class="mono">{{ dn.dn_no }}</b></div><div><span>Date</span><b>{{ dn.dn_date|fd }}</b></div><div><span>Charged</span><b>{{ ev.charged_h|sar }}</b></div><div><span>Agreement # on DN</span><b class="mono">{{ dn.agreement_no }}</b></div></div>
 <div class="tw"><table class="dt compact"><thead><tr><th>Model</th><th class="num">Units</th><th class="num">Rate</th><th class="num">SAR</th></tr></thead><tbody>
-{% for l in ev.lines %}<tr><td><b style="font-weight:500">{{ l.sku_obj.model_no }}</b><div class="small muted mono">{{ l.sku_obj.sku_code }}</div></td><td class="num">{{ l.units|num }}</td><td class="num">{{ l.rate_h|n2 }}</td><td class="num">{{ l.charged_h|n }}</td></tr>{% endfor %}</tbody></table></div>
+{% for l in ev.lines %}<tr><td>{% if l.sku_obj %}<b style="font-weight:500">{{ l.sku_obj.model_no }}</b><div class="small muted mono">{{ l.sku_obj.sku_code }}</div>{% else %}<b style="font-weight:500">{{ l.label }}</b><div class="small muted">Fixed fee</div>{% endif %}</td><td class="num">{{ l.units|num }}</td><td class="num">{{ l.rate_h|n2 }}</td><td class="num">{{ l.charged_h|n }}</td></tr>{% endfor %}</tbody></table></div>
 {% if not dn.validated %}
 {% include "partials/suggestions.html" %}
 <form id="link-form"><div class="field"><label for="link-sel">Or link by hand</label>

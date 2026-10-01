@@ -23,6 +23,8 @@ class Promotion(Base):
     name = models.CharField(max_length=160)
     category = models.CharField(max_length=8, choices=CATEGORIES)
     promo_type = models.CharField(max_length=20, choices=PROMO_TYPES, default="price_discount")
+    vendor_code = models.CharField(max_length=12, blank=True, db_index=True)
+    dn_instalments = models.BooleanField(default=False, help_text="Amazon bills this promotion in parts (e.g. monthly debit notes)")
     start = models.DateTimeField()
     end = models.DateTimeField()
     dn_due = models.DateTimeField()
@@ -46,3 +48,40 @@ class PromoLine(Base):
 
     class Meta:
         ordering = ["created_at"]
+
+
+class PromoFee(Base):
+    """A fixed amount ME funds on top of (or instead of) per-unit support: deal fee, marketing / co-op fee."""
+
+    promotion = models.ForeignKey(Promotion, on_delete=models.CASCADE, related_name="fees")
+    label = models.CharField(max_length=80)
+    amount_h = models.BigIntegerField()
+
+    class Meta:
+        ordering = ["created_at"]
+
+
+class PromoAmendment(Base):
+    """A change to an approved promotion (dates, support, models, fees). The debit-note check uses the amended terms."""
+
+    promotion = models.ForeignKey(Promotion, on_delete=models.CASCADE, related_name="amendments")
+    no = models.PositiveIntegerField()
+    reason = models.CharField(max_length=200)
+    changes = models.JSONField(default=list)
+    by_name = models.CharField(max_length=120, blank=True)
+
+    class Meta:
+        ordering = ["no"]
+
+
+class Budget(Base):
+    """Promotion support budget for a category and quarter."""
+
+    category = models.CharField(max_length=8, choices=CATEGORIES)
+    year = models.PositiveIntegerField()
+    quarter = models.PositiveSmallIntegerField()
+    amount_h = models.BigIntegerField()
+
+    class Meta:
+        ordering = ["year", "quarter", "category"]
+        constraints = [models.UniqueConstraint(fields=["category", "year", "quarter"], name="uniq_budget")]

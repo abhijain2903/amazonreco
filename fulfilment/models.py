@@ -34,6 +34,11 @@ class Shipment(Base):
     slot_id = models.CharField(max_length=30, blank=True)
     slot_start = models.DateTimeField(null=True, blank=True)
     slot_window = models.CharField(max_length=20, blank=True)
+    freight = models.CharField(max_length=8, default="prepaid", choices=[("prepaid", "ME books the delivery (Carrier Central)"),
+                                                                         ("collect", "Amazon collects (routing request)")])
+    slot_outcome = models.CharField(max_length=10, blank=True, help_text="missed / refused: the last appointment failed")
+    slot_note = models.CharField(max_length=200, blank=True)
+    reschedules = models.PositiveIntegerField(default=0)
 
 
 class ShipmentLine(Base):
@@ -43,3 +48,16 @@ class ShipmentLine(Base):
 
     class Meta:
         ordering = ["created_at"]  # creation order: stable across databases (ids are random UUIDs)
+
+
+class Carton(Base):
+    """One carton on the ASN, with the SSCC printed on its label. Amazon receives against these."""
+
+    shipment = models.ForeignKey(Shipment, on_delete=models.CASCADE, related_name="carton_list")
+    seq = models.PositiveIntegerField()
+    sscc = models.CharField(max_length=18, unique=True)
+    sku = models.ForeignKey(Sku, on_delete=models.PROTECT)
+    qty = models.IntegerField()
+
+    class Meta:
+        ordering = ["shipment", "seq"]

@@ -4,7 +4,7 @@
 {% block title %}{{ p.mecl_ref }}{% endblock %}
 {% block chip %}{% promo_chip p st %}{% endblock %}
 {% block head %}
-<div class="sum"><span>{% cat p.category %} {{ p.category|catname }}</span><span>{{ p.get_promo_type_display }}</span><span>Runs <b>{{ p.start|fd }} – {{ p.end|fd }}</b></span><span>DN due <b>{{ p.dn_due|fd }}</b></span><span>Support <b>{{ support|sar }}</b></span><span>Owner <b>{{ p.owner_name }}</b></span></div>
+<div class="sum">{% if p.vendor_code %}<span>Vendor code <b class="mono">{{ p.vendor_code }}</b></span>{% endif %}<span>{% cat p.category %} {{ p.category|catname }}</span><span>{{ p.get_promo_type_display }}</span><span>Runs <b>{{ p.start|fd }} – {{ p.end|fd }}</b></span><span>DN due <b>{{ p.dn_due|fd }}</b></span><span>Support <b>{{ support|sar }}</b></span><span>Owner <b>{{ p.owner_name }}</b></span></div>
 {% include "partials/chain.html" %}
 {% include "partials/stepper.html" %}
 {% include "partials/dtabs.html" %}
@@ -18,11 +18,22 @@
   <td class="num">{{ l.support_h|n2 }}</td><td class="num">{{ l.expected_units|num }}</td><td class="num">{{ l.expected_units|mul:l.support_h|n }}</td><td class="num">{% if l.sold_units is None %}<span class="faint">After promo</span>{% else %}{{ l.sold_units|num }}{% endif %}</td></tr>{% endfor %}</tbody>
   <tfoot><tr><td>Total</td><td></td><td class="num">{{ exp_units|num }}</td><td class="num">{{ support|n }}</td><td class="num">{% if sold_units is not None %}{{ sold_units|num }}{% endif %}</td></tr></tfoot></table></div>
   <p class="small faint">Sold units come from the Amazon sales report for the promo dates. They set the expected debit note value.</p>
+  {% with fees=p.fees.all %}{% if fees %}<h3 class="sect-h">Fixed fees</h3><div class="tw"><table class="dt compact"><thead><tr><th>Fee</th><th class="num">SAR</th></tr></thead><tbody>{% for f in fees %}<tr><td>{{ f.label }}</td><td class="num">{{ f.amount_h|n }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}{% endwith %}
+  <p class="small muted">Billing: {% if p.dn_instalments %}<b>instalments</b> — Amazon may send several debit notes (e.g. monthly); each is checked against what is left.{% else %}one debit note after the end (a later correction DN is checked against what is left).{% endif %}</p>
+  {% if p.stage == 'draft' or p.stage == 'submitted' %}<details class="inline-form"><summary class="small">Add a fixed fee or change billing</summary>
+    <form class="row" style="gap:6px;margin-top:8px" hx-post="/promos/{{ p.mecl_ref }}/fee/" hx-swap="none"><input type="hidden" name="version" value="{{ p.version }}">
+    <input class="inp" name="label" placeholder="e.g. Lightning Deal fee" aria-label="Fee" style="flex:1 1 180px" required><input class="inp" name="amount" type="number" step="0.01" min="0.01" placeholder="SAR" aria-label="Fee SAR" style="width:120px" required>
+    <button class="btn sm" type="submit" {% perm 'promo' %}>Add fee</button></form>
+    <div style="margin-top:8px"><button class="btn sm" hx-post="/promos/{{ p.mecl_ref }}/instalments/" hx-vals='{"on": "{% if p.dn_instalments %}0{% else %}1{% endif %}"}' hx-swap="none" {% perm 'promo' %}>{% if p.dn_instalments %}Billed with one debit note{% else %}Billed in instalments{% endif %}</button></div></details>{% endif %}
+  {% with ams=p.amendments.all %}{% if ams %}<h3 class="sect-h">Amendments</h3>
+  {% for a in ams %}<div class="card" style="margin-bottom:8px"><div class="card-b"><b>Amendment {{ a.no }}</b> <span class="small muted">· {{ a.created_at|fdt }} · {{ a.by_name }}</span><div class="small">{{ a.reason }}</div>
+  <ul class="small" style="margin:6px 0 0">{% for c in a.changes %}<li>{{ c.what }}: {% if c.old %}{{ c.old }} → {% endif %}{{ c.new }}</li>{% endfor %}</ul></div></div>{% endfor %}{% endif %}{% endwith %}
   {% if p.stage == 'submitted' %}<div class="card"><div class="card-b" style="display:grid;gap:10px"><div class="field"><label for="agr-in">Amazon agreement #</label>
   <input class="inp" id="agr-in" name="agreement" placeholder="e.g. 71034522" inputmode="numeric" {% if not caps.promo %}disabled{% endif %}>
   <span class="help">Enter it once Amazon approves. R8 blocks a number that is already linked to another promotion.</span></div></div></div>{% endif %}
 
 {% elif tab == 'dn' %}
+  {% if dns|length > 1 %}<div class="row" style="gap:6px;margin-bottom:10px"><span class="small muted">Debit notes on agreement {{ p.agreement_no }}:</span>{% for d in dns %}<button class="btn sm{% if d == dn %} pri{% endif %}" hx-get="{{ base }}?tab=dn&amp;dn={{ d.dn_no }}" hx-target="#drawer">{{ d.dn_no }}{% if d.validated %} ✓{% endif %}</button>{% endfor %}</div>{% endif %}
   {% if dn %}{% include "partials/dn_check.html" %}
   {% elif st in pre_stages %}<div class="empty"><div class="ei">{% icon 'receipt' %}</div><b>No debit note yet</b><span>Amazon raises the debit note after the promotion ends plus 30 days, around {{ p.dn_due|fd }}.</span></div>
   {% else %}<div class="banner {% if st == 'dn_overdue' %}bad{% else %}info{% endif %}">{% if st == 'dn_overdue' %}{% icon 'alert' %}<span class="t"><b>Debit note overdue.</b> It was due {{ p.dn_due|fd }}. Chase Amazon or check for an unlinked DN.</span>{% else %}{% icon 'clock' %}<span class="t"><b>Waiting for the debit note.</b> Due around {{ p.dn_due|fd }}.</span>{% endif %}</div>
@@ -31,7 +42,9 @@
 {% elif tab == 'claim' %}
   {% if not c %}<div class="empty"><div class="ei">{% icon 'claim' %}</div><b>No claim yet</b><span>{% if st == 'dn_validated' %}The debit note is validated. Generate the claim for the product team.{% else %}The claim is created after the debit note is validated.{% endif %}</span></div>
   {% else %}
-  <div class="kv2"><div><span>Claim</span><b class="mono">{{ c.claim_no }}</b></div><div><span>Sent</span><b>{{ c.sent_at|fd }}</b></div><div><span>Claim amount</span><b>{{ c.amount_h|sar }}</b></div><div><span>Credit note{% if cns|length > 1 %}s{% endif %}</span><b class="mono">{% for n in cns %}{{ n.cn_no }}{% if not forloop.last %}, {% endif %}{% empty %}{{ c.cn_no|default:"—" }}{% endfor %}</b></div>
+  {% if claims|length > 1 %}<div class="tw"><table class="dt compact"><thead><tr><th>Claim</th><th>Debit note</th><th>Sent</th><th class="num">Claim SAR</th><th class="num">Credited SAR</th><th>Status</th></tr></thead><tbody>
+  {% for x in claims %}<tr{% if x == c %} class="sel"{% endif %}><td class="mono">{{ x.claim_no }}{% if x.batch_no %}<div class="small muted">{{ x.batch_no }}</div>{% endif %}</td><td class="mono">{{ x.debit_note.dn_no }}</td><td>{{ x.sent_at|fd }}</td><td class="num">{{ x.amount_h|n }}</td><td class="num">{% if x.cn_h is None %}—{% else %}{{ x.cn_h|n }}{% endif %}</td><td>{{ x.get_status_display }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
+  <div class="kv2"><div><span>Claim</span><b class="mono">{{ c.claim_no }}</b>{% if c.batch_no %} <span class="small muted">in {{ c.batch_no }}</span>{% endif %}</div><div><span>Sent</span><b>{{ c.sent_at|fd }}</b></div><div><span>Claim amount</span><b>{{ c.amount_h|sar }}</b></div><div><span>Credit note{% if cns|length > 1 %}s{% endif %}</span><b class="mono">{% for n in cns %}{{ n.cn_no }}{% if not forloop.last %}, {% endif %}{% empty %}{{ c.cn_no|default:"—" }}{% endfor %}</b></div>
   <div><span>Credited</span><b>{% if c.cn_h is None %}—{% else %}{{ c.cn_h|sar }}{% endif %}</b></div><div><span>Gap</span><b class="{% if c.status == 'shortfall' %}bad-t{% endif %}">{% if c.cn_h is None %}—{% else %}{{ c.gap_h|sar }}{% endif %}</b></div></div>
   {% if c.status == 'shortfall' %}<div class="banner bad">{% icon 'alert' %}<span class="t"><b>Credit note is {{ c.gap_h|sar }} short (R11).</b> Chase the product team or close with a write-off.</span></div>
   {% elif c.status == 'closed' %}<div class="banner ok">{% icon 'check' %}<span class="t"><b>Reconciled.</b> The credit note matches the claim.</span></div>
@@ -41,7 +54,7 @@
   {% for n in cns %}<tr><td class="mono">{{ n.cn_no }}</td><td>{{ n.cn_date|fd }}</td><td class="num">{{ n.amount_h|n }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
   <h3 class="sect-h">Sell-out claim file</h3>
   <div class="tw"><table class="dt compact"><thead><tr><th>MECL ref</th><th>Agreement</th><th>Model</th><th class="num">Units</th><th class="num">Rate</th><th class="num">SAR</th></tr></thead><tbody>
-  {% for l in c.debit_note.lines.all %}<tr><td class="mono">{{ p.mecl_ref }}</td><td class="mono">{{ p.agreement_no }}</td><td>{{ l.sku.model_no }}</td><td class="num">{{ l.units|num }}</td><td class="num">{{ l.rate_h|n2 }}</td><td class="num">{{ l.charged_h|n }}</td></tr>{% endfor %}</tbody></table></div>
+  {% for l in c.debit_note.lines.all %}<tr><td class="mono">{{ p.mecl_ref }}</td><td class="mono">{{ p.agreement_no }}</td><td>{% if l.sku %}{{ l.sku.model_no }}{% else %}{{ l.label }}{% endif %}</td><td class="num">{{ l.units|num }}</td><td class="num">{{ l.rate_h|n2 }}</td><td class="num">{{ l.charged_h|n }}</td></tr>{% endfor %}</tbody></table></div>
   {% endif %}
 
 {% elif tab == 'timeline' %}{% include "partials/timeline.html" %}
@@ -64,6 +77,7 @@
 {% elif st == 'rejected' %}Amazon rejected this promotion.{% endif %}{% endblock %}
 
 {% block foot %}
+{% if p.stage == 'approved' %}<button class="btn ghost" hx-get="/promos/{{ p.mecl_ref }}/amend/" hx-target="#modal" {% perm 'promo' %} title="Extend, change support, add a model or a fee">Amend</button>{% endif %}
 {% if st == 'draft' %}
   <button class="btn pri" hx-post="/promos/{{ p.mecl_ref }}/submit/" hx-vals='{"version": "{{ p.version }}"}' hx-swap="none" {% perm 'promo' %}>{% icon 'send' %}<span>Submit to Amazon</span></button>
 {% elif st == 'submitted' %}

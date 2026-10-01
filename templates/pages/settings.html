@@ -103,6 +103,14 @@
 <div class="tw"><table class="dt"><thead><tr><th>Code</th><th>Name</th><th class="num">SKUs</th><th class="num">Promos, all time</th><th class="num">Typical monthly promos</th></tr></thead><tbody>
 {% for c in cats %}<tr><td>{% cat c.c %}</td><td>{{ c.name }}</td><td class="num">{{ c.skus|num }}</td><td class="num">{{ c.promos }}</td><td class="num">{{ c.typical }}</td></tr>{% endfor %}</tbody></table></div>
 
+{% elif tab == 'vendors' %}
+<div class="tw"><table class="dt"><thead><tr><th>Vendor code</th><th>Name</th><th class="num">Open POs</th></tr></thead><tbody>
+{% for v, n in vcodes %}<tr><td><b class="mono">{{ v.code }}</b></td><td>{{ v.name }}</td><td class="num">{{ n }}</td></tr>{% empty %}<tr><td colspan="3" class="muted">No vendor codes yet. One code is assumed.</td></tr>{% endfor %}</tbody></table></div>
+<p class="small faint" style="margin-top:8px">Many vendors trade under more than one Amazon vendor code (e.g. per business unit). POs, payments and promotions carry their code; lists filter by it.</p>
+<form class="row" style="margin-top:12px;gap:8px;flex-wrap:wrap" hx-post="/settings/vendor-codes/add/" hx-swap="none" aria-label="Add a vendor code">
+  <input class="inp sm" name="code" placeholder="Vendor code, e.g. MODEL" required aria-label="Vendor code">
+  <input class="inp sm" name="name" placeholder="What it covers" aria-label="Name">
+  <button class="btn sm pri" type="submit" {% perm 'settings' %}>{% icon 'plus' %}<span>Add code</span></button></form>
 {% elif tab == 'fcs' %}
 <div class="tw"><table class="dt"><thead><tr><th>Code</th><th>Name</th><th>City</th><th class="num">Open POs</th></tr></thead><tbody>
 {% for f, n in fcs %}<tr><td><b class="mono">{{ f.code }}</b></td><td>{{ f.name }}</td><td>{{ f.city }}</td><td class="num">{{ n }}</td></tr>{% endfor %}</tbody></table></div>

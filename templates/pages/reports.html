@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="ph"><div><h1>Reports</h1><p>How each step of the Amazon business ran: orders, shipping, invoicing and cash, promotions. For the weekly review.</p></div>
+<div class="ph-act">{% include "partials/export_btn.html" %}<div class="seg" role="group" aria-label="Period">{% for d in periods %}<a class="{% if days == d %}on{% endif %}" href="?days={{ d }}" style="display:flex;align-items:center;padding:0 11px;height:32px;text-decoration:none;color:inherit">{{ d }} days</a>{% endfor %}</div></div></div>
+{% for s in sections %}<h3 class="sect-h" style="margin:18px 0 10px">{{ s.title }}</h3>
+<div class="kpis">{% for k in s.kpis %}<div class="kpi rep {{ k.tone }}"><span class="kpi-l">{{ k.label }}</span><span class="kpi-v">{{ k.value }}{% if k.unit %}<small>{{ k.unit }}</small>{% endif %}</span><span class="kpi-s">{{ k.sub }}</span></div>{% endfor %}</div>{% endfor %}
+<p class="small faint">Rates count records whose step happened in the period. Targets: green at or above target, amber close, red below.</p>
+{% endblock %}

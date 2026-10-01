@@ -1,6 +1,7 @@
 import uuid
 
 from django.conf import settings
+from django.contrib.postgres.fields import ArrayField
 from django.db import models
 from django.utils import timezone
 
@@ -62,8 +63,12 @@ class Notification(models.Model):
     link_type = models.CharField(max_length=20, blank=True)
     link_id = models.CharField(max_length=64, blank=True)
     link_tab = models.CharField(max_length=20, blank=True)
-    read = models.BooleanField(default=False)
+    read = models.BooleanField(default=False, help_text="Read by everyone (older alerts)")
     at = models.DateTimeField(default=timezone.now, db_index=True)
+    roles = ArrayField(models.CharField(max_length=20), default=list, blank=True, help_text="Who it is for; empty = everyone")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.CASCADE, related_name="alerts",
+                             help_text="A personal alert (a mention, an assignment)")
+    read_by = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="+")
 
     class Meta:
         ordering = ["-at", "-id"]
@@ -113,3 +118,28 @@ class Holiday(Base):
 
     class Meta:
         ordering = ["day"]
+
+
+class Assignment(Base):
+    """The person who owns a record (PO, promotion, dispute, debit note). Unassigned records belong to the role."""
+
+    entity = models.CharField(max_length=30)
+    entity_id = models.CharField(max_length=64)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="assignments")
+    by_name = models.CharField(max_length=120, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["entity", "entity_id"], name="uniq_assignment")]
+
+
+class VendorCode(Base):
+    """An Amazon vendor code ME trades under (many vendors have more than one)."""
+
+    code = models.CharField(max_length=12, unique=True)
+    name = models.CharField(max_length=120, blank=True)
+
+    class Meta:
+        ordering = ["code"]
+
+    def __str__(self):
+        return self.code

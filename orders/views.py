@@ -10,7 +10,7 @@ from billing.services import billing_of, invoice_checks, invoice_of
 from catalog.models import FulfilmentCentre
 from core import htmx
 from core.models import Note
-from core.services import timeline
+from core.services import CommandError, timeline
 from fulfilment import services as ful
 from fulfilment.services import asn_checks, delivery_of, shipment_of, slot_at_risk
 from payments.models import Payment
@@ -22,7 +22,7 @@ from .models import STAGE_LABELS, STAGES, PoLine, PurchaseOrder
 from .services import REASONS, get_po, line_checks, po_issues, po_units, po_value_h
 
 TABS = [("new", "To confirm", ["new"]), ("book", "To book", ["confirmed"]), ("release", "To release", ["booked"]),
-        ("ship", "In fulfilment", ["released", "asn", "slot", "delivered"]), ("done", "Invoiced & paid", ["invoiced", "paid", "rejected"]),
+        ("ship", "In fulfilment", ["released", "asn", "slot", "delivered"]), ("done", "Invoiced & paid", ["invoiced", "paid", "rejected", "cancelled"]),
         ("all", "All", None)]
 OWNER = {"new": "PIC", "confirmed": "Planning", "booked": "Credit", "released": "PIC", "asn": "Logistics", "slot": "Logistics",
          "delivered": "PIC", "invoiced": "Finance", "paid": "Finance"}
@@ -33,11 +33,14 @@ def pos_list(request):
     view = htmx.pick(request, "view", ["table", "board"], "table")
     q = request.GET.get("q", "").strip()
     fc = request.GET.get("fc", "")
+    vc = request.GET.get("vc", "")
     cfg = get_cfg()
     now = timezone.now()
     qs = PurchaseOrder.objects.select_related("fc").prefetch_related(Prefetch("lines", queryset=PoLine.objects.select_related("sku")))
     if fc:
         qs = qs.filter(fc__code=fc)
+    if vc:
+        qs = qs.filter(vendor_code=vc)
     if q:
         qs = qs.filter(Q(po_no__icontains=q) | Q(sap_order_no__icontains=q) | Q(lines__sku__model_no__icontains=q) | Q(lines__asin__icontains=q)).distinct()
     rows = []
@@ -63,15 +66,16 @@ def pos_list(request):
     ]
     from core.exports import sar, wants_export, xlsx
     if wants_export(request):
-        return xlsx(f"POs_{tab}", ["PO", "FC", "Ordered", "Confirm by", "Lines", "Units", "Value SAR", "Lines to decide", "Stage"],
-                    [[r["po"].po_no, r["po"].fc.code, r["po"].order_date, r["po"].confirm_by, r["n_lines"], r["units"], sar(r["value"]),
+        return xlsx(f"POs_{tab}", ["PO", "Vendor code", "FC", "Ordered", "Confirm by", "Lines", "Units", "Value SAR", "Lines to decide", "Stage"],
+                    [[r["po"].po_no, r["po"].vendor_code, r["po"].fc.code, r["po"].order_date, r["po"].confirm_by, r["n_lines"], r["units"], sar(r["value"]),
                       r["issues"], r["po"].stage_label] for r in rows])
     board = []
     if view == "board":
         for s in STAGES:
             items = [r for r in rows if r["po"].stage == s]
             board.append(dict(stage=s, label=STAGE_LABELS[s], items=items[:8], more=max(0, len(items) - 8), owner=OWNER[s]))
-    return render(request, "pages/pos.html", dict(rows=rows, tab=tab, view=view, q=q, fc=fc, kpis=kpis, board=board,
+    from core.models import VendorCode
+    return render(request, "pages/pos.html", dict(rows=rows, tab=tab, view=view, q=q, fc=fc, vc=vc, vcodes=VendorCode.objects.all(), kpis=kpis, board=board,
                   fcs=FulfilmentCentre.objects.all(), tabs=[dict(id=k, label=l, count=counts[k]) for k, l, _ in TABS], r3=cfg.p("R3", "hrs")))
 
 
@@ -81,14 +85,14 @@ def _steps(po, cfg, lines):
     pr = all(line_checks(l, cfg)["price_ok"] for l in lines)
     sk = all(line_checks(l, cfg)["stock_ok"] for l in lines)
     s = lambda done: "done" if done else ""
-    arr = [dict(l="Order confirmation", st=s(i >= 1 or po.stage == "rejected")),
+    arr = [dict(l="Order confirmation", st=s(i >= 1 or po.stage in ("rejected", "cancelled"))),
            dict(l="Price check", st=("done" if pr else "fail") if is_new else "done"),
            dict(l="Stock check", st=("done" if sk else "fail") if is_new else "done"),
            dict(l="Salesforce entry", st=s(bool(po.sf_order_id) or i >= 2)), dict(l="SAP booking", st=s(bool(po.sap_order_no))),
            dict(l="Credit release", st=s(i >= 3)), dict(l="ASN", st=s(i >= 4)), dict(l="Carrier Central slot", st=s(i >= 5)),
            dict(l="Dispatch & deliver", st=s(i >= 6)), dict(l="Invoice upload", st=s(i >= 7))]
     cur = next((k for k, x in enumerate(arr) if x["st"] == ""), None)
-    if cur is not None and po.stage != "rejected":
+    if cur is not None and po.stage not in ("rejected", "cancelled"):
         arr[cur]["st"] = "cur"
     return arr
 
@@ -108,7 +112,8 @@ def drawer(request, po_no):
     from core.models import Attachment
     from payments.models import Dispute
     needs_pod = po.delivered_at is not None and not Attachment.objects.filter(entity="po", entity_id=po.po_no, kind="pod").exists()
-    ctx = dict(po=po, tab=tab, needs_pod=needs_pod, base=base, url=f"{base}?tab={tab}", lines=lines, pays=pays, short_pay=short_pay,
+    from core.views import owner_ctx
+    ctx = dict(po=po, tab=tab, needs_pod=needs_pod, changeable=svc.CHANGEABLE, **owner_ctx("po", po.po_no), base=base, url=f"{base}?tab={tab}", lines=lines, pays=pays, short_pay=short_pay,
                open_dispute=Dispute.objects.filter(ref=disputed.payment_no).first() if disputed else None, d=d, sh=sh, b=b, inv=inv, now=now,
                value=po_value_h(po, lines), units=po_units(po, lines), state=engine.confirm_state(po.confirm_by, now, cfg),
                steps=_steps(po, cfg, lines), reasons=REASONS,
@@ -259,11 +264,40 @@ def slot(request, po_no):
         except (TypeError, ValueError):
             day = timezone.localtime(sh.ship_date).replace(tzinfo=None)
         start = timezone.make_aware(day.replace(hour=int(win[:2]), minute=0))
-        ful.book_slot(request.user, po_no, request.POST.get("slot_id", ""), start, win, request.POST.get("version"))
-        return htmx.done(request, f"Slot {request.POST.get('slot_id')} saved", close_modal=True)
+        ful.book_slot(request.user, po_no, request.POST.get("slot_id", ""), start, win, request.POST.get("version"),
+                      freight=request.POST.get("freight", "prepaid"), reason=request.POST.get("reason", ""))
+        return htmx.done(request, f"{'Pickup' if request.POST.get('freight') == 'collect' else 'Slot'} {request.POST.get('slot_id')} saved", close_modal=True)
     from core.services import peek_number
-    return render(request, "dialogs/slot.html", dict(po=po, sh=sh, next_slot=f"CC{peek_number('slot', 66120)}",
+    return render(request, "dialogs/slot.html", dict(po=po, sh=sh, next_slot=f"CC{peek_number('slot', 66120)}", again=po.stage == "slot" or bool(sh.slot_outcome),
                   units=sum(l.qty for l in sh.lines.all()), day=timezone.localtime(sh.ship_date + timedelta(hours=10)).date().isoformat()))
+
+
+def change(request, po_no):
+    """Apply a change or cancellation Amazon sent for the PO."""
+    po = get_po(po_no)
+    if request.method == "POST":
+        P = request.POST
+        we = None
+        if P.get("window_end"):
+            try:
+                we = timezone.make_aware(datetime.strptime(P["window_end"], "%Y-%m-%d").replace(hour=23, minute=59))
+            except ValueError:
+                raise CommandError("Pick a valid ship-window date.")
+        qty = {k[2:]: v for k, v in P.items() if k.startswith("n-")}
+        po, ch = svc.amazon_change(request.user, po_no, qty, cancel=P.get("cancel") == "1", reason=P.get("reason", "").strip()[:200],
+                                   window_end=we, version=P.get("version"))
+        return htmx.done(request, f"{po.po_no} cancelled" if po.stage == "cancelled" else f"Amazon's change applied to {po.po_no}", "info", close_modal=True)
+    if po.stage not in svc.CHANGEABLE:
+        raise CommandError("Changes can only be applied before the ASN is sent.")
+    return render(request, "dialogs/po_change.html", dict(po=po, lines=svc.po_lines(po), we=timezone.localtime(po.window_end).date().isoformat() if po.window_end else ""))
+
+
+def slot_failed(request, po_no):
+    po = get_po(po_no)
+    if request.method == "POST":
+        ful.slot_failed(request.user, po_no, request.POST.get("outcome"), request.POST.get("reason"), request.POST.get("version"))
+        return htmx.done(request, f"{po_no}: appointment released. Book a new slot", "info", close_modal=True)
+    return render(request, "dialogs/slot_failed.html", dict(po=po, sh=shipment_of(po)))
 
 
 @require_POST
@@ -276,6 +310,27 @@ def deliver(request, po_no):
 def fix_billing(request, po_no):
     billing.fix_billing(request.user, po_no)
     return htmx.done(request, "Billing corrected. Invoice check passed")
+
+
+@require_POST
+def invoice_status(request, po_no):
+    inv = billing.set_invoice_status(request.user, po_no, request.POST.get("status", ""), request.POST.get("note", ""))
+    return htmx.done(request, f"Invoice {inv.invoice_no}: {inv.get_amazon_status_display().lower()}", "info")
+
+
+@require_POST
+def invoice_resubmit(request, po_no):
+    inv, f = billing.resubmit_invoice(request.user, po_no, request.POST.get("note", ""))
+    return htmx.done(request, f"Invoice {inv.invoice_no} sent again (revision {inv.revision})", file=f)
+
+
+@require_POST
+def credit_memo(request, po_no):
+    from core.services import to_h
+    amt = request.POST.get("amount")
+    m = billing.issue_credit_memo(request.user, po_no, to_h(amt) if amt not in (None, "") else None, request.POST.get("reason", ""),
+                                  request.POST.get("memo_no", ""))
+    return htmx.done(request, f"Credit memo {m.memo_no} recorded")
 
 
 @require_POST

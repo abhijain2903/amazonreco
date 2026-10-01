@@ -104,7 +104,7 @@ def debit_note_promotion(dn):
     DN versus the promotion (30%), rate per unit versus agreed support (15%) and timing after the promotion (10%)."""
     from promotions.models import Promotion
     from promotions.services import stage_of
-    lines = list(dn.lines.all())
+    lines = [l for l in dn.lines.all() if l.sku_id]      # fixed-fee lines carry no model
     skus = {l.sku_id for l in lines}
     cands = []
     for pr in Promotion.objects.exclude(agreement_no=None).prefetch_related("lines"):
@@ -128,7 +128,10 @@ def debit_note_promotion(dn):
 
 
 # ---------- deduction reason → dispute type and next step ----------
-KEYWORDS = [("promo", r"promo|co-?op|allowance|marketing|agreement|debit note|vcdn"),
+KEYWORDS = [("chargeback", r"chargeback|charge-back|non-?compliance|asn accuracy|asn on-?time|label|prep|overweight|oversize|appointment"),
+            ("returns", r"\breturn|rtv|customer return"),
+            ("promo", r"promo|allowance|agreement|debit note|vcdn"),
+            ("coop", r"co-?op|advertis|marketing|sponsored|accrual"),
             ("damage", r"damage|defect|broken|crushed"),
             ("price", r"price|cost|pricing|rate"),
             ("shortage", r"short|received less|missing|not received|quantity|qty")]
@@ -137,6 +140,9 @@ NOTES = {
     "price": "Invoice {inv} was billed at the agreed cost for every line (checked against the price list, R1/R6). Please reverse the price deduction of SAR {amt}.",
     "promo": "This deduction relates to a promotion debit note. Please confirm the agreement # so it can be matched; SAR {amt} is already covered by the validated debit note.",
     "damage": "Goods left our warehouse undamaged per the carrier receipt for ASN {asn}. Please share the damage report or reverse the deduction of SAR {amt}.",
+    "chargeback": "ASN {asn} was submitted on time with carton labels matching the shipment, and the delivery kept its booked appointment. Please reverse the chargeback of SAR {amt}.",
+    "returns": "Please share the return authorisation and receipt for the units deducted (SAR {amt}) on invoice {inv}; we will match them against the stock received back.",
+    "coop": "Please confirm the co-op / advertising agreement behind the deduction of SAR {amt}; it does not match an agreed accrual on our side.",
     "other": "Please share the basis for the deduction of SAR {amt} on invoice {inv} so we can review it.",
 }
 
@@ -152,6 +158,10 @@ def deduction(p, dn_cands=None):
         action, why = "link_dn", f"matches debit note {dn_cands[0]['targets'][0]}"
     elif kind in ("shortage", "price", "damage"):
         action, why = "dispute", "ME's records (ASN, delivery, agreed price) support the full invoice"
+    elif kind == "chargeback":
+        action, why = "dispute", "check the chargeback type against the ASN time, labels and appointment before disputing"
+    elif kind in ("returns", "coop"):
+        action, why = "review", "check it against the return authorisations / co-op agreement; accept if they match"
     elif kind == "promo":
         action, why = "dispute", "promotion deduction without a matching validated debit note"
     else:

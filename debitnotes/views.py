@@ -51,7 +51,7 @@ def drawer(request, key):
         request.GET = request.GET.copy()
         request.GET.setdefault("tab", "dn")
         return promo_drawer(request, ev["promo"].mecl_ref)
-    skus = {l["sku"] for l in ev["lines"]}
+    skus = {l["sku"] for l in ev["lines"] if l["sku"]}
     cands = []
     for p in Promotion.objects.exclude(agreement_no=None).prefetch_related("lines"):
         if stage_of(p) not in ("waiting_dn", "dn_overdue"):
@@ -64,6 +64,8 @@ def drawer(request, key):
         from matching.ai import available
         from matching.views import suggestions_for
         ctx.update(sugs=suggestions_for("dn_promo", dn), kind="dn_promo", source=dn.dn_no, perm_name="dn", ai_on=available())
+    from core.views import owner_ctx
+    ctx.update(owner_ctx("dn", dn.dn_no))
     return render(request, "records/dn.html", ctx)
 
 

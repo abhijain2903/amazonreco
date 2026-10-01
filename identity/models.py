@@ -20,6 +20,7 @@ ROLE_HOME = {"PIC": "action", "Planning": "pos", "Credit": "pos", "Logistics": "
 class User(AbstractUser):
     display_name = models.CharField(max_length=120, blank=True)
     roles = ArrayField(models.CharField(max_length=20, choices=ROLE_CHOICES), default=list, blank=True)
+    alert_scope = models.CharField(max_length=8, default="mine", choices=[("mine", "My work and mentions"), ("all", "Everything")])
 
     @property
     def name(self):

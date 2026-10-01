@@ -1,5 +1,5 @@
 <form hx-post="/notes/{{ entity }}/{{ key }}/" hx-swap="none" class="stack" style="gap:8px">
-  <div class="field"><label for="note-in">Add a note</label><textarea class="inp" id="note-in" name="text" rows="3" placeholder="Visible to everyone on this record"></textarea></div>
+  <div class="field"><label for="note-in">Add a note</label><textarea class="inp" id="note-in" name="text" rows="3" placeholder="Visible to everyone on this record. Type @name to notify someone"></textarea></div>
   <div><button class="btn" type="submit">{% icon 'plus' %}<span>Add note</span></button></div>
 </form>
 {% if notes %}<div class="tl">{% for n in notes %}<div class="tl-i"><span class="d"></span><div><p>{{ n.text }}</p><small>{{ n.author_name }} · {{ n.created_at|fdt }}</small></div></div>{% endfor %}</div>{% endif %}

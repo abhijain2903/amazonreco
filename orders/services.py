@@ -19,16 +19,36 @@ REASONS = {
 
 
 # ---------- queries ----------
+def reserved_elsewhere(line):
+    """Units of this SKU already promised to other POs: POs waiting for confirmation that are due earlier (confirm-by
+    order, so the most urgent PO gets the stock first) and POs confirmed since the last stock snapshot."""
+    from django.db.models import Q, Sum
+
+    from .models import PoLine
+    po = line.po
+    earlier = Q(po__confirm_by__lt=po.confirm_by) | Q(po__confirm_by=po.confirm_by, po__po_no__lt=po.po_no)
+    qs = (PoLine.objects.filter(sku_id=line.sku_id).exclude(po_id=po.pk)
+          .filter((Q(po__stage="new") & earlier) | Q(po__stage="confirmed", po__confirmed_at__gt=line.sku.stock_as_of)))
+    return qs.aggregate(n=Sum("qty_confirmed"))["n"] or 0
+
+
+def available_stock(line):
+    return max(0, line.sku.free_stock - (reserved_elsewhere(line) if line.po.stage == "new" else 0))
+
+
 def line_checks(line, cfg=None):
-    """R1 price (against the price valid on the PO's order date), R2 stock, and the case-pack hint."""
+    """R1 price (against the price valid on the PO's order date), R2 stock after other POs' reservations,
+    and the case-pack hint."""
     from catalog.models import agreed_cost_h
     cfg = cfg or get_cfg()
     agreed = agreed_cost_h(line.sku, line.po.order_date)
     price_ok, diff = engine.price_check(line.cost_h, agreed, cfg)
-    stock = line.sku.free_stock
+    reserved = reserved_elsewhere(line) if line.po.stage == "new" else 0
+    stock = max(0, line.sku.free_stock - reserved)
     cp = line.sku.case_pack or 1
     return {"case_pack": cp, "case_ok": cp <= 1 or line.qty_ordered % cp == 0,
             "case_qty": (min(line.qty_ordered, max(stock, 0)) // cp) * cp,
+            "free": line.sku.free_stock, "reserved": reserved,
             "agreed_h": agreed, "diff_h": diff, "price_ok": price_ok, "stock": stock,
             "stock_ok": engine.stock_check(line.qty_ordered, stock, cfg),
             "tone": engine.line_tone(line.cost_h, agreed, line.qty_ordered, stock, cfg)}
@@ -61,14 +81,14 @@ def refresh_suggestions(po, cfg=None):
     for l in po_lines(po):
         if l.touched:
             continue
-        d, q, r = engine.suggest(l.cost_h, agreed_cost_h(l.sku, po.order_date), l.qty_ordered, l.sku.free_stock, cfg)
+        d, q, r = engine.suggest(l.cost_h, agreed_cost_h(l.sku, po.order_date), l.qty_ordered, available_stock(l), cfg)
         if (l.decision, l.qty_confirmed, l.reason) != (d, q, r):
             l.decision, l.qty_confirmed, l.reason = d, q, r
             l.save(update_fields=["decision", "qty_confirmed", "reason", "updated_at"])
 
 
 def refresh_open_pos(cfg=None):
-    for po in PurchaseOrder.objects.filter(stage="new"):
+    for po in PurchaseOrder.objects.filter(stage="new").order_by("confirm_by", "po_no"):   # earlier POs reserve first
         refresh_suggestions(po, cfg)
 
 
@@ -97,7 +117,7 @@ def set_line(user, po_no, line_id, decision=None, qty=None, reason=None):
         elif decision == "reject":
             line.qty_confirmed = 0
         else:
-            line.qty_confirmed = min(line.qty_ordered, max(1, line.sku.free_stock))
+            line.qty_confirmed = min(line.qty_ordered, max(1, available_stock(line)))
         line.reason = REASONS[decision][0]
     if qty is not None and line.decision == "partial":
         line.qty_confirmed = max(0, min(line.qty_ordered, int(qty or 0)))
@@ -126,7 +146,7 @@ def save_lines(user, po_no, values, version=None):
         before = (l.decision, l.qty_confirmed, l.reason)
         if d and d != l.decision:
             l.decision = d
-            l.qty_confirmed = l.qty_ordered if d == "accept" else 0 if d == "reject" else min(l.qty_ordered, max(1, l.sku.free_stock))
+            l.qty_confirmed = l.qty_ordered if d == "accept" else 0 if d == "reject" else min(l.qty_ordered, max(1, available_stock(l)))
             l.reason = REASONS[d][0]
         else:
             if l.decision == "partial" and q not in (None, ""):
@@ -140,6 +160,7 @@ def save_lines(user, po_no, values, version=None):
     if changed:
         po.bump()
         po.save(update_fields=["version", "updated_at"])
+        refresh_open_pos()          # later POs see what this one now holds
     return po
 
 
@@ -199,6 +220,7 @@ def confirm_po(user, po_no, version=None):
     f = save_file("po_ack", f"PO_ack_{po.po_no}.csv", rows, "po", po.po_no)
     from integrations.connectors import get_adapter
     get_adapter("amazon_vc").push("po_ack", f)
+    refresh_open_pos()
     return po, f
 
 
@@ -264,6 +286,80 @@ def hold_po(user, po_no, reason, version=None):
     po.save()
     audit("po", po.po_no, f"Put on credit hold: {po.credit_hold}", user, action="hold", reason=po.credit_hold)
     return po
+
+
+CHANGEABLE = ["new", "confirmed", "booked", "released"]
+
+
+@transaction.atomic
+def amazon_change(user, po_no, new_qty, cancel=False, reason="", window_end=None, version=None, source="the hub"):
+    """Amazon cut quantities, cancelled lines or the whole PO, or moved the ship window — before the ASN goes.
+    new_qty: {line id or sku_code: qty}; 0 cancels a line. Confirmed quantities never exceed what Amazon still wants."""
+    require(user, "confirm")
+    po = get_po(po_no, lock=True)
+    check_version(po, version)
+    if po.stage not in CHANGEABLE:
+        raise CommandError("Changes can only be applied before the ASN is sent. After that, raise it with Amazon as a shortage.")
+    changes = []
+    if cancel:
+        before = po.stage
+        po.stage = "cancelled"
+        po.credit_hold = ""
+        po.bump()
+        po.save()
+        audit("po", po.po_no, "PO cancelled by Amazon" + (f": {reason}" if reason else "") +
+              (f". Cancel SAP sales order {po.sap_order_no}" if po.sap_order_no else ""), user, action="amazon_cancel",
+              reason=reason, before={"stage": before}, after={"stage": "cancelled"})
+        refresh_open_pos()
+        return po, ["PO cancelled"]
+    from fulfilment.services import delivery_of
+    d = delivery_of(po)
+    for l in po_lines(po):
+        q = new_qty.get(str(l.pk), new_qty.get(l.sku.sku_code))
+        if q in (None, ""):
+            continue
+        q = max(0, int(q))
+        if q == l.qty_ordered:
+            continue
+        if q > l.qty_ordered:
+            raise CommandError(f"{l.sku.model_no}: Amazon can only reduce a PO line. A higher quantity comes as a new PO.")
+        changes.append([l.sku.sku_code, l.qty_ordered, q])
+        l.qty_ordered = q
+        if po.stage == "new":
+            l.touched = False
+        else:
+            if l.qty_confirmed > q:
+                l.qty_confirmed = q
+                if q == 0:
+                    l.decision, l.reason = "reject", "Cancelled by Amazon"
+                else:
+                    l.decision = "accept"
+            if d:
+                dl = d.lines.filter(sku=l.sku).first()
+                if dl and (dl.asn_qty if dl.asn_qty is not None else dl.qty) > l.qty_confirmed:
+                    dl.asn_qty = l.qty_confirmed
+                    dl.save()
+        l.save()
+    moved = window_end and window_end != po.window_end
+    if not changes and not moved:
+        raise CommandError("Nothing changed. Enter the new quantities Amazon sent, or cancel the PO.")
+    if moved:
+        po.window_end = window_end
+    if po.stage == "new":
+        refresh_suggestions(po)
+    if all(l.qty_ordered == 0 for l in po_lines(po)):
+        po.stage = "cancelled"
+    po.bump()
+    po.save()
+    text = "; ".join(f"{s} {a:,} → {b:,}" for s, a, b in changes)
+    if moved:
+        text += ("; " if text else "") + f"ship window now ends {timezone.localtime(window_end):%d %b}"
+    audit("po", po.po_no, f"Amazon changed the PO ({source}): {text}" + (f". {reason}" if reason else ""), user,
+          action="amazon_change", reason=reason, after={"lines": changes})
+    if po.stage != "new" and changes:
+        notify(f"Amazon changed PO {po.po_no} after confirmation: {text}", "warn", ("po", po.po_no, "lines"))
+    refresh_open_pos()
+    return po, changes
 
 
 def create_po(po_no, fc, order_date, confirm_by, lines, *, window_start=None, window_end=None, user=None,

@@ -4,7 +4,7 @@ from django.urls import resolve
 from identity.models import ROLE_TITLES
 from identity.permissions import caps
 
-from .models import Notification
+from .services import unread_alerts
 
 
 def hub(request):
@@ -18,7 +18,7 @@ def hub(request):
     return {
         "caps": caps(user),
         "section": section,
-        "unread": Notification.objects.filter(read=False).count(),
+        "unread": unread_alerts(user).count(),
         "dev_login": settings.DEV_LOGIN,
         "demo": settings.DEMO_SIMULATIONS,
         "admin_console": settings.DJANGO_ADMIN and user.is_staff,

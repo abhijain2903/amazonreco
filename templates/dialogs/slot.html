@@ -1,14 +1,19 @@
 {% extends "dialogs/_modal.html" %}
-{% block size %}sm{% endblock %}{% block label %}Book delivery slot{% endblock %}
-{% block mtitle %}Book delivery slot{% endblock %}
+{% block size %}sm{% endblock %}{% block label %}{% if again %}Reschedule delivery{% else %}Book delivery slot{% endif %}{% endblock %}
+{% block mtitle %}{% if again %}Reschedule delivery{% else %}Book delivery slot{% endif %}{% endblock %}
 {% block msub %}<p>PO {{ po.po_no }} · ASN {{ sh.asn_no }} · {{ po.fc.code }}</p>{% endblock %}
 {% block form_open %}<form hx-post="/pos/{{ po.po_no }}/slot/" hx-swap="none"><input type="hidden" name="version" value="{{ po.version }}">{% endblock %}
 {% block mbody %}
-<div class="banner info">{% icon 'info' %}<span class="t">Book the slot in Amazon Carrier Central, then enter the slot ID here. The hub tracks it against the ASN.</span></div>
-<div class="fgrid"><div class="field"><label for="sl-id">Carrier Central slot ID</label><input class="inp" id="sl-id" name="slot_id" value="{{ next_slot }}" required></div>
+{% if sh.slot_outcome %}<div class="banner bad">{% icon 'alert' %}<span class="t"><b>Last appointment {{ sh.slot_outcome }}.</b> {{ sh.slot_note }}</span></div>{% endif %}
+<div class="field"><label for="sl-fr">Freight</label><select class="sel" id="sl-fr" name="freight">
+  <option value="prepaid" {% if sh.freight == 'prepaid' %}selected{% endif %}>Prepaid: ME books a Carrier Central appointment</option>
+  <option value="collect" {% if sh.freight == 'collect' %}selected{% endif %}>Collect: routing request, Amazon picks up</option></select></div>
+<p class="small muted">Prepaid: book in Carrier Central and enter the slot ID. Collect: submit the routing request in Vendor Central and enter Amazon's reference (ARN) and pickup time.</p>
+<div class="fgrid"><div class="field"><label for="sl-id">Slot ID / Amazon reference</label><input class="inp" id="sl-id" name="slot_id" value="{% if again and sh.slot_id %}{{ sh.slot_id }}{% else %}{{ next_slot }}{% endif %}" required></div>
 <div class="field"><label for="sl-date">Date</label><input class="inp" type="date" id="sl-date" name="date" value="{{ day }}"></div>
 <div class="field"><label for="sl-win">Time window</label><select class="sel" id="sl-win" name="window"><option>08:00–12:00</option><option>12:00–16:00</option><option>16:00–20:00</option></select></div></div>
-<div class="kv2"><div><span>Cartons</span><b>{{ sh.cartons }}</b></div><div><span>Units</span><b>{{ units|num }}</b></div><div><span>Truck ships</span><b>{{ sh.ship_date|fdt }}</b></div></div>
+{% if again %}<div class="field"><label for="sl-r">Why the change</label><input class="inp" id="sl-r" name="reason" placeholder="e.g. Amazon moved the appointment"></div>{% endif %}
+<div class="kv2"><div><span>Cartons</span><b>{{ sh.cartons }}</b></div><div><span>Units</span><b>{{ units|num }}</b></div><div><span>Truck ships</span><b>{{ sh.ship_date|fdt }}</b></div>{% if sh.reschedules %}<div><span>Rescheduled</span><b>{{ sh.reschedules }}×</b></div>{% endif %}</div>
 {% endblock %}
-{% block mfoot %}<span class="hint"></span><button type="button" class="btn" data-close="modal">Cancel</button><button class="btn pri" type="submit" {% perm 'ship' %}>Save slot</button>{% endblock %}
+{% block mfoot %}<span class="hint"></span><button type="button" class="btn" data-close="modal">Cancel</button><button class="btn pri" type="submit" {% perm 'ship' %}>{% if again %}Save new slot{% else %}Save slot{% endif %}</button>{% endblock %}
 {% block form_close %}</form>{% endblock %}

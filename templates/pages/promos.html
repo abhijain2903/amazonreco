@@ -4,20 +4,35 @@
 <div class="ph-act">{% include "partials/export_btn.html" %}<button class="btn" hx-get="/uploads/new/?type=U7" hx-target="#modal" {% perm 'promo' %}>{% icon 'upload' %}<span>Upload promotions</span></button>
 <button class="btn pri" hx-get="/promos/new/" hx-target="#modal" {% perm 'promo' %}>{% icon 'plus' %}<span>New promotion</span></button></div></div>
 <div class="kpis">{% for k in kpis %}<a class="kpi {% if k.alert %}alert{% endif %}" href="{{ k.url }}"><span class="kpi-l">{{ k.l }}</span><span class="kpi-v">{{ k.v }}</span><span class="kpi-s">{{ k.s }}</span></a>{% endfor %}</div>
-{% if view != 'board' %}<div class="tabs" role="tablist">{% for t in tabs %}<a class="tab {% if t.id == tab %}on{% endif %}" href="?tab={{ t.id }}&view={{ view }}&cat={{ cat }}&q={{ q|urlencode }}">{{ t.label }}<span class="ct">{{ t.count }}</span></a>{% endfor %}</div>{% endif %}
+{% if view != 'board' and view != 'budget' %}<div class="tabs" role="tablist">{% for t in tabs %}<a class="tab {% if t.id == tab %}on{% endif %}" href="?tab={{ t.id }}&view={{ view }}&cat={{ cat }}&q={{ q|urlencode }}">{{ t.label }}<span class="ct">{{ t.count }}</span></a>{% endfor %}</div>{% endif %}
 <form class="fbar" hx-get="/promos/" hx-target="#view" hx-select="#view" hx-swap="outerHTML" hx-trigger="input changed delay:300ms from:#pr-q" hx-push-url="true">
   <input type="hidden" name="tab" value="{{ tab }}"><input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="cat" value="{{ cat }}">
   <div class="fsearch">{% icon 'search' %}<input class="inp" id="pr-q" name="q" placeholder="Name, MECL ref or agreement #" value="{{ q }}" aria-label="Search promotions"></div>
   <a class="cchip {% if not cat %}on{% endif %}" href="?tab={{ tab }}&view={{ view }}&q={{ q|urlencode }}">All</a>
   {% for c in cats %}<a class="cchip {% if cat == c %}on{% endif %}" href="?tab={{ tab }}&view={{ view }}&cat={{ c }}&q={{ q|urlencode }}"><span class="cdot" style="background:{{ c|catcolor }}"></span>{{ c }}</a>{% endfor %}
+  {% if vcodes|length > 1 %}{% for v in vcodes %}<a class="cchip {% if vc == v.code %}on{% endif %}" href="?tab={{ tab }}&view={{ view }}&cat={{ cat }}&vc={% if vc != v.code %}{{ v.code }}{% endif %}">{{ v.code }}</a>{% endfor %}{% endif %}
   <span class="spacer"></span>
   <div class="seg" role="group" aria-label="View">
     <a class="{% if view == 'table' %}on{% endif %}" href="?view=table&tab={{ tab }}&cat={{ cat }}">{% icon 'table' %}Table</a>
     <a class="{% if view == 'board' %}on{% endif %}" href="?view=board&cat={{ cat }}">{% icon 'board' %}Board</a>
-    <a class="{% if view == 'timeline' %}on{% endif %}" href="?view=timeline&tab={{ tab }}&cat={{ cat }}">{% icon 'cal' %}Timeline</a></div>
+    <a class="{% if view == 'timeline' %}on{% endif %}" href="?view=timeline&tab={{ tab }}&cat={{ cat }}">{% icon 'cal' %}Timeline</a>
+    <a class="{% if view == 'budget' %}on{% endif %}" href="?view=budget">{% icon 'wallet' %}Budget</a></div>
 </form>
 
-{% if view == 'board' %}
+{% if view == 'budget' %}
+<div id="view">
+<div class="row" style="gap:8px;margin:4px 0 12px"><a class="btn sm" href="?view=budget&y={{ prev.0 }}&qn={{ prev.1 }}">‹ Q{{ prev.1 }} {{ prev.0 }}</a><b>Q{{ bq }} {{ by }}</b><a class="btn sm" href="?view=budget&y={{ nxt.0 }}&qn={{ nxt.1 }}">Q{{ nxt.1 }} {{ nxt.0 }} ›</a>
+<span class="small muted">Promotions count in the quarter they start. Committed = support per unit × expected units + fixed fees, from approval on.</span></div>
+<div class="tw"><table class="dt"><thead><tr><th>Category</th><th class="num">Promotions</th><th class="num">Budget SAR</th><th class="num">Committed SAR</th><th style="width:16%">Used</th><th class="num">Billed by Amazon</th><th class="num">Recovered from brands</th><th class="num">Left SAR</th></tr></thead><tbody>
+{% for r in budget %}<tr><td>{% cat r.cat %} {{ r.name }}</td><td class="num">{{ r.n }}</td><td class="num">{% if r.budget is None %}<span class="faint">Not set</span>{% else %}{{ r.budget|n }}{% endif %}</td><td class="num">{{ r.committed|n }}</td>
+<td>{% if r.pct is not None %}<div class="bar"><span class="{% if r.over %}over{% endif %}" style="width:{{ r.pct }}%"></span></div>{% endif %}</td><td class="num">{{ r.billed|n }}</td><td class="num">{{ r.recovered|n }}</td><td class="num {% if r.over %}bad-t{% endif %}">{% if r.left is None %}—{% else %}{{ r.left|n }}{% endif %}</td></tr>{% endfor %}</tbody>
+<tfoot><tr><td>Total</td><td></td><td class="num">{{ btot.budget|n }}</td><td class="num">{{ btot.committed|n }}</td><td></td><td class="num">{{ btot.billed|n }}</td><td class="num">{{ btot.recovered|n }}</td><td></td></tr></tfoot></table></div>
+<details class="inline-form"><summary class="small">Set a budget</summary><form class="row" style="gap:6px;margin-top:8px" hx-post="/promos/budgets/" hx-swap="none">
+<select class="sel" name="category" aria-label="Category">{% for c in cats %}<option>{{ c }}</option>{% endfor %}</select>
+<input class="inp" name="year" type="number" value="{{ by }}" aria-label="Year" style="width:90px"><select class="sel" name="quarter" aria-label="Quarter">{% for q in "1234" %}<option value="{{ q }}" {% if q|add:0 == bq %}selected{% endif %}>Q{{ q }}</option>{% endfor %}</select>
+<input class="inp" name="amount" type="number" step="1" min="0" placeholder="SAR" aria-label="Budget SAR" style="width:140px" required><button class="btn sm" type="submit" {% perm 'promo' %}>Save budget</button></form></details>
+</div>
+{% elif view == 'board' %}
 <div class="board">{% for col in board %}<div class="bcol"><div class="bcol-h">{% chip col.label col.tone %}<span class="ct">{{ col.n }}</span></div>
 {% for p in col.items %}<button type="button" class="bcard" hx-get="/records/promo/{{ p.mecl_ref }}/" hx-target="#drawer"><div class="r">{% cat p.category %}<span class="mono">{{ p.mecl_ref|slice:"-4:" }}</span></div>
 <b style="font-weight:500;font-size:13px">{{ p.name }}</b><div class="r"><span>{{ p.start|fd }} – {{ p.end|fd }}</span><b class="tnum" style="color:var(--text)">{{ p.support|n }}</b></div></button>{% endfor %}

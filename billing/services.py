@@ -108,3 +108,94 @@ def submit_invoice(user, po_no, version=None):
     from integrations.connectors import get_adapter
     get_adapter("amazon_vc").push("invoice", f)
     return inv, f
+
+
+STATUS_TEXT = {"accepted": "Amazon accepted invoice {inv}", "on_hold": "Amazon put invoice {inv} on hold",
+               "rejected": "Amazon rejected invoice {inv}"}
+
+
+@transaction.atomic
+def set_invoice_status(user, po_no, status, note=""):
+    """Amazon's answer to the invoice: accepted, on hold (price / quantity mismatch) or rejected."""
+    require(user, "invoice")
+    po = get_po(po_no, lock=True)
+    inv = invoice_of(po)
+    if not inv:
+        raise CommandError("This PO has no invoice yet.")
+    if status not in STATUS_TEXT:
+        raise CommandError("Pick accepted, on hold or rejected.")
+    note = (note or "").strip()[:200]
+    if status in ("on_hold", "rejected") and not note:
+        raise CommandError("Give Amazon's reason, e.g. price mismatch on line 2.")
+    inv.amazon_status, inv.amazon_note = status, note if status != "accepted" else ""
+    inv.bump()
+    inv.save()
+    audit("po", po.po_no, STATUS_TEXT[status].format(inv=inv.invoice_no) + (f": {note}" if note else ""), user,
+          action="invoice_" + status, reason=note)
+    if status != "accepted":
+        from core.services import notify
+        notify(f"Invoice {inv.invoice_no} {'on hold' if status == 'on_hold' else 'rejected'}: {note}", "bad", ("po", po.po_no, "invoice"))
+    return inv
+
+
+@transaction.atomic
+def resubmit_invoice(user, po_no, note=""):
+    """Send the corrected invoice again (after a rejection or to clear a hold)."""
+    require(user, "invoice")
+    po = get_po(po_no, lock=True)
+    inv = invoice_of(po)
+    if not inv or inv.amazon_status not in ("rejected", "on_hold"):
+        raise CommandError("Only a rejected or held invoice is sent again.")
+    inv.revision += 1
+    inv.amazon_status, inv.amazon_note = "submitted", ""
+    inv.bump()
+    inv.save()
+    rows = [["invoice_no", "revision", "po_no", "invoice_date", "asin", "qty", "unit_price_sar", "net_sar"]] + [
+        [inv.invoice_no, inv.revision, po.po_no, timezone.localtime(inv.invoice_date).date().isoformat(), l.sku.asin, l.qty,
+         f"{l.price_h / 100:.2f}", f"{l.net_h / 100:.2f}"] for l in inv.lines.select_related("sku")]
+    f = save_file("invoice", f"Invoice_{inv.invoice_no}_r{inv.revision}.csv", rows, "po", po.po_no)
+    audit("po", po.po_no, f"Invoice {inv.invoice_no} corrected and sent again (revision {inv.revision})" + (f": {note}" if note else ""),
+          user, action="invoice_resubmit", reason=note or "")
+    from integrations.connectors import get_adapter
+    get_adapter("amazon_vc").push("invoice", f)
+    return inv, f
+
+
+@transaction.atomic
+def issue_credit_memo(user, po_no, amount_h, reason, memo_no=""):
+    """A credit memo against the invoice. If Amazon has already short-paid by about this much, the short payment is
+    settled by the memo and the PO closes."""
+    from django.db.models import Sum
+
+    from core.services import fmt_sar
+    from payments.models import Payment
+    from payments.services import COUNTED
+    from .models import CreditMemo
+    require(user, "invoice")
+    po = get_po(po_no, lock=True)
+    inv = invoice_of(po)
+    if not inv:
+        raise CommandError("This PO has no invoice yet.")
+    reason = (reason or "").strip()[:200]
+    if not reason:
+        raise CommandError("Give the reason for the credit memo.")
+    if not amount_h or amount_h <= 0 or amount_h > inv.net_due_h:
+        raise CommandError(f"The memo must be above 0 and at most {fmt_sar(inv.net_due_h)}.")
+    memo_no = (memo_no or "").strip()[:30] or f"MCM-2026-{next_number('credit_memo', 120):05d}"
+    if CreditMemo.objects.filter(memo_no=memo_no).exists():
+        raise CommandError(f"Credit memo {memo_no} already exists.")
+    m = CreditMemo.objects.create(invoice=inv, memo_no=memo_no, amount_h=amount_h, reason=reason, by_name=user.name)
+    audit("po", po.po_no, f"Credit memo {memo_no} for {fmt_sar(amount_h)} against {inv.invoice_no}: {reason}", user, action="credit_memo", reason=reason)
+    rows = [["credit_memo_no", "invoice_no", "po_no", "amount_sar", "reason"], [memo_no, inv.invoice_no, po.po_no, f"{amount_h / 100:.2f}", reason]]
+    save_file("credit_memo", f"Credit_memo_{memo_no}.csv", rows, "po", po.po_no)
+    paid = Payment.objects.filter(invoice=inv, status__in=COUNTED).aggregate(s=Sum("paid_h"))["s"] or 0
+    if po.stage == "invoiced" and engine.payment_match(paid, inv.net_due_h, get_cfg()) == "matched":
+        for p in Payment.objects.filter(invoice=inv, status="short"):
+            p.status = "accepted"
+            p.reason = f"{p.reason} · settled by credit memo {memo_no}".strip(" ·")
+            p.save()
+        po.stage, po.paid_at = "paid", timezone.now()
+        po.bump()
+        po.save()
+        audit("po", po.po_no, f"Paid in full after credit memo {memo_no}", user, action="paid")
+    return m

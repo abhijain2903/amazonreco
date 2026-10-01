@@ -31,10 +31,52 @@ def find_invoice(ref):
     return None
 
 
+def recovery_for(p, inv=None):
+    """Is this payment Amazon paying back a disputed deduction? It is when it names the dispute (our case number or
+    Amazon's case ID) or pays an invoice whose deduction is in an open dispute, for no more than the disputed amount."""
+    cfg = get_cfg()
+    text = norm(f"{p.invoice_ref} {p.reason}")
+    open_d = Dispute.objects.filter(recovered_in="", po__isnull=False).exclude(status="lost")
+    for d in open_d:
+        if norm(d.case_no) in text or (d.amazon_case_id and norm(d.amazon_case_id) in text):
+            return d
+    if inv:
+        refs = Payment.objects.filter(invoice=inv).exclude(pk=p.pk).values_list("payment_no", flat=True)
+        d = open_d.filter(ref__in=list(refs)).first()
+        if d and p.paid_h <= d.amount_h + cfg.tol_h():
+            return d
+    return None
+
+
+def _apply_recovery(p, d, at=None):
+    inv = Payment.objects.get(payment_no=d.ref).invoice
+    p.invoice, p.po, p.invoice_ref = inv, d.po, inv.invoice_no if inv else p.invoice_ref
+    p.status, p.deduction_h, p.hint = "matched", 0, f"Recovery for {d.case_no}"[:40]
+    p.save()
+    part = p.paid_h < d.amount_h
+    d.status, d.recovered_h, d.recovered_in = "won", min(p.paid_h, d.amount_h), p.payment_no
+    d.bump()
+    d.save()
+    Payment.objects.filter(payment_no=d.ref).update(status="recovered")
+    po = d.po
+    po.stage, po.paid_at = "paid", p.remit_date
+    po.bump()
+    po.save()
+    audit("dispute", d.case_no, f"Amazon paid back {fmt_sar(p.paid_h)} in payment {p.payment_no}" + (f" (part of {fmt_sar(d.amount_h)})" if part else ""),
+          name="Auto-match", system=True, action="recovered", at=at)
+    audit("po", po.po_no, f"Dispute {d.case_no} recovered: {fmt_sar(p.paid_h)} in payment {p.payment_no}", name="Auto-match",
+          system=True, action="payment", at=at)
+    return p
+
+
 def match_payment(p, at=None, cfg=None):
-    """Link a payment to its invoice and apply R7. Saves the payment."""
+    """Link a payment to its invoice and apply R7. Saves the payment. A payment that pays back a disputed deduction
+    is linked to its dispute, which closes as won."""
     cfg = cfg or get_cfg()
     inv = find_invoice(p.invoice_ref)
+    d = recovery_for(p, inv)
+    if d:
+        return _apply_recovery(p, d, at)
     if not inv:
         p.status, p.invoice, p.po = "unmatched", None, None
         p.save()
@@ -42,7 +84,7 @@ def match_payment(p, at=None, cfg=None):
     p.invoice, p.po = inv, inv.po
     p.invoice_ref = inv.invoice_no
     already = Payment.objects.filter(invoice=inv, status__in=COUNTED).exclude(pk=p.pk).aggregate(s=Sum("paid_h"))["s"] or 0
-    due = inv.total_h - already
+    due = inv.net_due_h - already
     if not p.deduction_h:
         p.deduction_h = max(0, due - p.paid_h)
     if engine.payment_match(p.paid_h, due, cfg) == "matched":
@@ -146,12 +188,16 @@ def manual_match(user, payment_no, invoice_no):
 
 
 @transaction.atomic
-def open_dispute(user, payment_no, dtype, amount_h, note, files=()):
+def open_dispute(user, payment_no, dtype, amount_h, note, files=(), subtype=""):
+    from .models import CHARGEBACK_TYPES, DISPUTE_TYPES
     require(user, "dispute")
     p = Payment.objects.select_for_update().get(payment_no=payment_no)
     if p.status != "short":
         raise CommandError("Only short payments can be disputed.")
-    d = Dispute.objects.create(case_no=f"DSP-{next_number('dispute', 41):04d}", type=dtype, ref=p.payment_no, po=p.po,
+    if dtype not in dict(DISPUTE_TYPES):
+        dtype = "other"
+    subtype = subtype if dtype == "chargeback" and subtype in dict(CHARGEBACK_TYPES) else ""
+    d = Dispute.objects.create(case_no=f"DSP-{next_number('dispute', 41):04d}", type=dtype, subtype=subtype, ref=p.payment_no, po=p.po,
                                amount_h=amount_h or p.deduction_h, due=timezone.now() + timedelta(days=14), note=note)
     for f in files:
         DisputeEvidence.objects.create(dispute=d, filename=f.name, file=f)

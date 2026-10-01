@@ -1,0 +1,16 @@
+{% extends "dialogs/_modal.html" %}
+{% block label %}Amazon changed the PO{% endblock %}
+{% block mtitle %}Amazon changed or cancelled this PO{% endblock %}
+{% block msub %}<p>PO {{ po.po_no }} · {{ po.fc.code }} · {{ po.stage_label }}</p>{% endblock %}
+{% block form_open %}<form hx-post="/pos/{{ po.po_no }}/change/" hx-swap="none"><input type="hidden" name="version" value="{{ po.version }}">{% endblock %}
+{% block mbody %}
+<div class="banner info">{% icon 'info' %}<span class="t">Enter the quantities from Amazon's change (0 cancels a line). {% if po.stage == 'new' %}The checks run again.{% else %}Confirmed quantities{% if po.stage == 'released' %} and the draft ASN{% endif %} are reduced to match.{% endif %}</span></div>
+<div class="tw"><table class="dt compact"><thead><tr><th>Model</th><th class="num">Ordered now</th>{% if po.stage != 'new' %}<th class="num">Confirmed</th>{% endif %}<th class="num">Amazon's new qty</th></tr></thead><tbody>
+{% for l in lines %}<tr><td>{{ l.sku.model_no }} <span class="small muted mono">{{ l.sku.sku_code }}</span></td><td class="num">{{ l.qty_ordered|num }}</td>{% if po.stage != 'new' %}<td class="num">{{ l.qty_confirmed|num }}</td>{% endif %}
+<td class="num"><input class="inp sm qty" type="number" min="0" max="{{ l.qty_ordered }}" name="n-{{ l.pk }}" value="{{ l.qty_ordered }}" aria-label="New quantity for {{ l.sku.model_no }}"></td></tr>{% endfor %}</tbody></table></div>
+<div class="fgrid"><div class="field"><label for="pc-we">Ship window ends</label><input class="inp" type="date" id="pc-we" name="window_end" value="{{ we }}"></div>
+<div class="field"><label for="pc-r">Reference / reason</label><input class="inp" id="pc-r" name="reason" placeholder="e.g. Amazon PO change 12 Oct"></div></div>
+<label class="row small" style="gap:6px"><input type="checkbox" name="cancel" value="1"> Amazon cancelled the whole PO{% if po.sap_order_no %} (cancel SAP order {{ po.sap_order_no }} too){% endif %}</label>
+{% endblock %}
+{% block mfoot %}<span class="hint"></span><button type="button" class="btn" data-close="modal">Close</button><button class="btn pri" type="submit" {% perm 'confirm' %}>Apply change</button>{% endblock %}
+{% block form_close %}</form>{% endblock %}

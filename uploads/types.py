@@ -10,6 +10,12 @@ from django.utils import timezone
 from catalog.models import CATEGORY_NAMES, FulfilmentCentre, Price, Sku, resolve_sku
 from core.services import fmt_sar, next_number, notify, peek_number, to_h
 
+def is_fee(code):
+    """A debit-note row for a fixed fee (deal fee, co-op) rather than a model: the SKU column says FEE / … fee."""
+    k = "".join(ch for ch in str(code or "").upper() if ch.isalnum())
+    return k in ("FEE", "FIXEDFEE", "DEALFEE", "COOP", "COOPFEE", "MARKETINGFEE") or (k.endswith("FEE") and not k[:-3].isdigit())
+
+
 NUM_FIELDS = {"case_pack", "agreed_cost_sar", "free_stock", "qty_ordered", "unit_cost_sar", "qty", "cartons", "amount_paid_sar",
               "deduction_sar", "support_per_unit_sar", "expected_units", "units", "rate_sar", "amount_sar"}
 DATE_FIELDS = {"valid_from", "valid_to", "order_date", "ship_window_start", "ship_window_end", "ship_date",
@@ -31,7 +37,8 @@ TYPES = OrderedDict([
         ("po_no", 1, ["po", "ponumber", "purchaseorder", "order"]), ("fc_code", 1, ["fc", "shipto", "shiptolocation", "warehouse", "fulfillmentcenter"]),
         ("order_date", 1, ["orderdate", "ordered", "podate", "orderedon"]), ("ship_window_end", 1, ["windowend", "shipwindowend", "latestship"]),
         ("ship_window_start", 0, ["windowstart", "shipwindowstart"]), ("asin", 1, []), ("model_no", 0, ["model", "modelnumber", "externalid"]),
-        ("qty_ordered", 1, ["qty", "quantity", "quantityrequested", "orderedqty"]), ("unit_cost_sar", 1, ["unitcost", "cost", "price", "netcost"])])),
+        ("qty_ordered", 1, ["qty", "quantity", "quantityrequested", "orderedqty"]), ("unit_cost_sar", 1, ["unitcost", "cost", "price", "netcost"]),
+        ("vendor_code", 0, ["vendor", "vendorcode"])])),
     ("U5", dict(name="SAP deliveries", src="SAP", go="/ship/?tab=asn", cols=[
         ("sap_delivery_no", 1, ["delivery", "deliveryno", "outbounddelivery"]), ("po_no", 1, ["po", "ponumber", "customerpo"]),
         ("sku_code", 1, ["sku", "material"]), ("qty", 1, ["quantity", "deliveredqty"]), ("cartons", 1, ["cases", "boxes"]),
@@ -39,11 +46,12 @@ TYPES = OrderedDict([
     ("U6", dict(name="Remittance / payments", src="Vendor Central payments", go="/pay/?tab=short", cols=[
         ("payment_no", 1, ["payment", "paymentnumber", "remittance", "paymentid"]), ("remit_date", 1, ["date", "paymentdate"]),
         ("invoice_no", 1, ["invoice", "invoicenumber"]), ("amount_paid_sar", 1, ["amountpaid", "paid", "amount"]),
-        ("deduction_sar", 1, ["deduction", "deductions"]), ("deduction_reason", 0, ["reason"])])),
+        ("deduction_sar", 1, ["deduction", "deductions"]), ("deduction_reason", 0, ["reason"]), ("vendor_code", 0, ["vendor", "vendorcode"])])),
     ("U7", dict(name="Promotions (bulk)", src="Product team Excel", go="/promos/?tab=pre", perm="promo", cols=[
         ("promo_name", 1, ["name", "promotion"]), ("category", 1, ["cat"]), ("start_date", 1, ["start"]), ("end_date", 1, ["end"]),
         ("sku_code", 1, ["sku", "model", "asin"]), ("support_per_unit_sar", 1, ["support", "supportperunit", "fundingperunit"]),
-        ("expected_units", 1, ["units", "expected"]), ("promo_type", 0, ["type", "promotiontype", "dealtype"])])),
+        ("expected_units", 1, ["units", "expected"]), ("promo_type", 0, ["type", "promotiontype", "dealtype"]),
+        ("vendor_code", 0, ["vendor", "vendorcode"])])),
     ("U8", dict(name="Debit notes", src="Vendor Central", go="/dns/?tab=todo", cols=[
         ("dn_no", 1, ["dn", "debitnote", "debitnoteno"]), ("agreement_no", 1, ["agreement", "agreementnumber", "agreementid"]),
         ("dn_date", 1, ["date"]), ("sku_code", 1, ["sku", "asin", "model"]), ("units", 1, ["qty", "quantity"]),
@@ -146,11 +154,22 @@ def validate(tid, o, ctx, cfg):
     elif tid == "U4":
         from orders.models import PurchaseOrder
         s = resolve_sku(o["asin"]) or resolve_sku(o.get("model_no"))
-        exists = PurchaseOrder.objects.filter(po_no=o["po_no"]).exists()
+        old = PurchaseOrder.objects.filter(po_no=o["po_no"]).first()
+        exists = bool(old)
         if not s:
-            e.append(f"ASIN {o['asin']} is not in the SKU master" + (_did_you_mean_sku(o.get("model_no") or o["asin"]) or ". Add it with U1 first"))
+            e.append(f"ASIN {o['asin']} is not in the SKU master" + (_did_you_mean_sku(o.get("model_no") or o["asin"]) or ". An admin adds it in Settings → SKU master (or with U1), then re-upload"))
         if exists:
-            w.append("PO already imported. Row will be skipped")
+            from orders.services import CHANGEABLE
+            ol = old.lines.filter(sku=s).first() if s else None
+            q = int(num(o["qty_ordered"]))
+            if not ol or q == ol.qty_ordered:
+                w.append("PO already imported. Row will be skipped")
+            elif old.stage not in CHANGEABLE:
+                w.append(f"Amazon changed the quantity ({ol.qty_ordered} → {q}) but the PO is past the ASN. Row skipped; raise it with Amazon")
+            elif q > ol.qty_ordered:
+                w.append(f"Quantity went up ({ol.qty_ordered} → {q}). Amazon sends extra units as a new PO. Row skipped")
+            else:
+                w.append(f"Amazon change: {ol.qty_ordered} → {q} units{' (line cancelled)' if q == 0 else ''}. Applied on import")
         # Master data (SKUs, FCs) is never created as a side effect of a transaction import: a typo in a
         # Vendor Central export must not add a fulfilment centre. An admin adds new FCs in Settings → Amazon FCs.
         if not FulfilmentCentre.objects.filter(code=o["fc_code"]).exists():
@@ -202,7 +221,9 @@ def validate(tid, o, ctx, cfg):
         from promotions.models import Promotion
         if DebitNote.objects.filter(dn_no=o["dn_no"]).exists():
             e.append(f"DN {o['dn_no']} already imported")
-        if not sk():
+        if is_fee(o["sku_code"]):
+            pass                                    # a fixed-fee line: no model
+        elif not sk():
             e.append(f"SKU/ASIN {o['sku_code']} not found" + _did_you_mean_sku(o["sku_code"]))
         if not Promotion.objects.filter(agreement_no=o["agreement_no"]).exists():
             w.append(f"Agreement {o['agreement_no']} not in tracker. DN will be unlinked")
@@ -312,8 +333,20 @@ def apply(tid, rows, user):
         from orders.models import PurchaseOrder
         from orders.services import create_po, notify_issues
         issues = skipped = 0
+        changed = 0
         for no, ls in group(rows, "po_no").items():
-            if PurchaseOrder.objects.filter(po_no=no).exists():
+            old = PurchaseOrder.objects.filter(po_no=no).first()
+            if old:
+                from orders.services import CHANGEABLE, amazon_change
+                want = {}
+                for o in ls:
+                    s = resolve_sku(o["asin"]) or resolve_sku(o.get("model_no"))
+                    ol = old.lines.filter(sku=s).first() if s else None
+                    if ol and int(num(o["qty_ordered"])) < ol.qty_ordered:
+                        want[s.sku_code] = int(num(o["qty_ordered"]))
+                if want and old.stage in CHANGEABLE:
+                    amazon_change(user, no, want, source="file upload")
+                    changed += 1
                 skipped += len(ls)
                 continue
             fc = FulfilmentCentre.objects.get(code=ls[0]["fc_code"])  # validated above: unknown FCs are errors
@@ -322,9 +355,15 @@ def apply(tid, rows, user):
                            [((resolve_sku(o["asin"]) or resolve_sku(o.get("model_no"))), int(num(o["qty_ordered"])), to_h(o["unit_cost_sar"])) for o in ls],
                            window_start=parse_date(ls[0].get("ship_window_start")), window_end=parse_date(ls[0]["ship_window_end"]),
                            user=user, source="file upload")
+            vc = str(ls[0].get("vendor_code") or "").strip().upper()[:12]
+            if vc:
+                po.vendor_code = vc
+                po.save(update_fields=["vendor_code"])
             created += 1
             issues += 1 if notify_issues(po) else 0
             run_po_checks.defer(po_no=no)
+        if changed:
+            lines.append(f"{changed} existing PO{'s' if changed > 1 else ''} updated with Amazon's changes")
         lines += [f"{created} purchase orders created, {len(rows) - skipped} lines checked",
                   f"{issues} PO{' needs' if issues == 1 else 's need'} attention in the Action Center"]
     elif tid == "U5":
@@ -342,12 +381,15 @@ def apply(tid, rows, user):
             created += 1
         lines.append(f"{created} deliveries loaded. ASNs are ready to build")
     elif tid == "U6":
+        from payments.models import Payment
         from payments.services import import_payment
         m = s = u = 0
         todo = []
         for o in rows:
             p = import_payment(o["payment_no"], parse_date(o["remit_date"]), o["invoice_no"], to_h(o["amount_paid_sar"]),
                                to_h(o["deduction_sar"] or 0), o.get("deduction_reason", ""))
+            if o.get("vendor_code"):
+                Payment.objects.filter(pk=p.pk).update(vendor_code=str(o["vendor_code"]).strip().upper()[:12])
             created += 1
             m += p.status == "matched"
             s += p.status == "short"
@@ -371,7 +413,8 @@ def apply(tid, rows, user):
             en = en.replace(hour=23, minute=59)
             create_promotion(user, name, cat_of(ls[0]["category"]), st, en, "Product team",
                              [(resolve_sku(o["sku_code"]), to_h(o["support_per_unit_sar"]), int(num(o["expected_units"]))) for o in ls],
-                             source="bulk upload", promo_type=type_of(ls[0].get("promo_type")))
+                             source="bulk upload", promo_type=type_of(ls[0].get("promo_type")),
+                             vendor_code=str(ls[0].get("vendor_code") or "").strip().upper()[:12])
             created += 1
         lines += [f"{created} promotions created as drafts", "Submit them to Amazon from the Promotions page"]
     elif tid == "U8":
@@ -380,7 +423,8 @@ def apply(tid, rows, user):
         unlinked = []
         for no, ls in group(rows, "dn_no").items():
             dn = create_dn(no, ls[0]["agreement_no"], parse_date(ls[0]["dn_date"]),
-                           [(resolve_sku(o["sku_code"]), int(num(o["units"])), to_h(o["rate_sar"])) for o in ls], user=user)
+                           [(None, 1, to_h(o.get("amount_sar") or o["rate_sar"]), str(o["sku_code"]).strip()) if is_fee(o["sku_code"])
+                            else (resolve_sku(o["sku_code"]), int(num(o["units"])), to_h(o["rate_sar"])) for o in ls], user=user)
             created += 1
             ev = notify_status(dn)
             mm += ev["status"] == "mismatch"

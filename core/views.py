@@ -39,7 +39,7 @@ def dashboard(request):
     pos = list(PurchaseOrder.objects.prefetch_related("lines"))
     to_conf = [p for p in pos if p.stage == "new"]
     overdue = [p for p in to_conf if p.confirm_by < now]
-    open_po = [p for p in pos if p.stage not in ("paid", "rejected")]
+    open_po = [p for p in pos if p.stage not in ("paid", "rejected", "cancelled")]
     unpaid = Invoice.objects.filter(po__stage="invoiced")
     disp = Dispute.objects.filter(status__in=["open", "submitted"])
     promos = list(Promotion.objects.prefetch_related("lines"))
@@ -112,6 +112,16 @@ def action(request):
                   tabs=[dict(id=k, label=l, count=len(groups[k]), url=f"?tab={k}&mine={'1' if mine else '0'}") for k, l in tabs]))
 
 
+def reports(request):
+    from .reports import report, rows
+    days = int(htmx.pick(request, "days", ["7", "30", "90"], "30"))
+    sections = report(days)
+    from .exports import wants_export, xlsx
+    if wants_export(request):
+        return xlsx(f"Management_report_{days}d", ["Area", "Measure", "Value", "Detail"], rows(sections))
+    return render(request, "pages/reports.html", dict(sections=sections, days=days, periods=[7, 30, 90]))
+
+
 # ---------- shell partials ----------
 def nav(request):
     return render(request, "partials/nav.html", {"path": request.GET.get("path", "/")})
@@ -121,20 +131,39 @@ def topbar(request):
     return render(request, "partials/bell.html")
 
 
+def _alerts(request):
+    from .services import visible_alerts
+    items = list(visible_alerts(request.user).prefetch_related("read_by")[:25])
+    for n in items:
+        n.seen = n.read or request.user in n.read_by.all()
+    return render(request, "partials/notifications.html", {"items": items, "scope": request.user.alert_scope})
+
+
 def notifications(request):
-    return render(request, "partials/notifications.html", {"items": Notification.objects.all()[:25]})
+    return _alerts(request)
 
 
 @require_POST
 def notifications_read(request):
-    Notification.objects.filter(read=False).update(read=True)
-    return render(request, "partials/notifications.html", {"items": Notification.objects.all()[:25]})
+    from .services import unread_alerts
+    Through = Notification.read_by.through
+    Through.objects.bulk_create([Through(notification_id=i, user_id=request.user.pk) for i in unread_alerts(request.user).values_list("id", flat=True)],
+                                ignore_conflicts=True)
+    return _alerts(request)
+
+
+@require_POST
+def notifications_scope(request):
+    u = request.user
+    u.alert_scope = "all" if u.alert_scope == "mine" else "mine"
+    u.save(update_fields=["alert_scope"])
+    return _alerts(request)
 
 
 def notification_open(request, pk):
-    n = get_object_or_404(Notification, pk=pk)
-    n.read = True
-    n.save(update_fields=["read"])
+    from .services import visible_alerts
+    n = get_object_or_404(visible_alerts(request.user), pk=pk)
+    n.read_by.add(request.user)
     url = _record_url(n.link_type, n.link_id, n.link_tab) if n.link_type else None
     resp = HttpResponse("")
     import json
@@ -241,7 +270,7 @@ RECORD_PAGES = {"po": "/pos/?tab=all", "promo": "/promos/", "dn": "/dns/", "paym
 
 def sku_drawer(request, key):
     s = get_object_or_404(Sku, sku_code=key)
-    pos = PurchaseOrder.objects.filter(lines__sku=s).exclude(stage__in=["paid", "rejected"]).distinct()
+    pos = PurchaseOrder.objects.filter(lines__sku=s).exclude(stage__in=["paid", "rejected", "cancelled"]).distinct()
     promos = Promotion.objects.filter(lines__sku=s).distinct()
     return render(request, "records/sku.html", {"s": s, "pos": [(p, p.lines.filter(sku=s).first()) for p in pos],
                                                 "promos": [(p, p.lines.filter(sku=s).first()) for p in promos],
@@ -254,7 +283,35 @@ def add_note(request, entity, key):
     if not text:
         raise CommandError("Type a note first.")
     Note.objects.create(entity=entity, entity_id=key, text=text, author_name=request.user.name)
-    return htmx.done(request, "Note added", refresh=False)
+    from .models import Assignment
+    from .services import LABEL, mentioned_users, notify
+    told = []
+    for u in mentioned_users(text):
+        if u != request.user:
+            notify(f"{request.user.name} mentioned you on {LABEL.get(entity, entity)} {key}: “{text[:90]}”", "info", (entity, key, "notes"), user=u)
+            told.append(u)
+    a = Assignment.objects.filter(entity=entity, entity_id=key).select_related("user").first()
+    if a and a.user != request.user and a.user not in told:
+        notify(f"{request.user.name} added a note on {LABEL.get(entity, entity)} {key}: “{text[:90]}”", "info", (entity, key, "notes"), user=a.user)
+    return htmx.done(request, "Note added" + (f" · {', '.join(u.name for u in told)} notified" if told else ""), refresh=False)
+
+
+@require_POST
+def assign(request, entity, key):
+    from .services import assign as do_assign
+    if entity not in ("po", "promo", "dispute", "dn"):
+        raise Http404
+    to = do_assign(request.user, entity, key, request.POST.get("user", ""))
+    return htmx.done(request, f"Assigned to {to.name}" if to else "Back with the role", refresh=False)
+
+
+def owner_ctx(entity, key):
+    """Context for the 'Owner' picker in a drawer header."""
+    from identity.models import User
+    from .models import Assignment
+    a = Assignment.objects.filter(entity=entity, entity_id=key).select_related("user").first()
+    people = [u for u in User.objects.filter(is_active=True).order_by("first_name", "username") if u.roles and "Admin" not in u.roles]
+    return dict(owner=a.user if a else None, people=people, owner_entity=entity, owner_key=key)
 
 
 def documents(entity, key, po=None):
@@ -273,7 +330,8 @@ def documents(entity, key, po=None):
     return sorted(docs, key=lambda d: d["at"], reverse=True)
 
 
-KIND_LABELS = {"po_ack": "PO acknowledgement", "asn": "ASN", "invoice": "Invoice", "promotion": "Promotion file", "claim": "Claim file"}
+KIND_LABELS = {"po_ack": "PO acknowledgement", "asn": "ASN", "invoice": "Invoice", "promotion": "Promotion file", "claim": "Claim file",
+               "labels": "Carton labels", "credit_memo": "Credit memo"}
 
 
 @require_POST
@@ -379,7 +437,7 @@ def healthz(request):
 def settings_page(request):
     require(request.user, "settings")
     tabs = [("skus", "SKU master"), ("prices", "Price list"), ("rules", "Rules & tolerances"), ("cats", "Categories"),
-            ("matching", "Matching"), ("calendar", "Calendar"), ("fcs", "Amazon FCs"), ("users", "Users & roles"), ("notify", "Notifications"), ("numbering", "Numbering")]
+            ("matching", "Matching"), ("calendar", "Calendar"), ("fcs", "Amazon FCs"), ("vendors", "Vendor codes"), ("users", "Users & roles"), ("notify", "Notifications"), ("numbering", "Numbering")]
     tab = htmx.pick(request, "tab", [k for k, _ in tabs], "skus")
     ctx = {"tab": tab, "tabs": tabs}
     if tab in ("skus", "prices"):
@@ -402,7 +460,11 @@ def settings_page(request):
         ctx["cats"] = [dict(c=c, name=n, skus=Sku.objects.filter(category=c).count(), promos=Promotion.objects.filter(category=c).count(),
                             typical={"PA": 4, "DI": 6, "TV": 1, "HAV": 1, "Bundle": 1}[c]) for c, n in CATEGORY_NAMES.items()]
     if tab == "fcs":
-        ctx["fcs"] = [(f, f.pos.exclude(stage__in=["paid", "rejected"]).count()) for f in FulfilmentCentre.objects.all()]
+        ctx["fcs"] = [(f, f.pos.exclude(stage__in=["paid", "rejected", "cancelled"]).count()) for f in FulfilmentCentre.objects.all()]
+    if tab == "vendors":
+        from .models import VendorCode
+        ctx["vcodes"] = [(v, PurchaseOrder.objects.filter(vendor_code=v.code).exclude(stage__in=["paid", "rejected", "cancelled"]).count())
+                         for v in VendorCode.objects.all()]
     if tab == "users":
         ctx.update(roles=list(ROLE_TITLES.items()), perms=[(PERM_LABELS[p], [r in rs for r in ROLE_TITLES]) for p, rs in PERMS.items()],
                    people=User.objects.filter(is_active=True).order_by("date_joined"))
@@ -498,6 +560,22 @@ def fc_add(request):
     from catalog.services import add_fc
     fc = add_fc(request.user, request.POST.get("code"), request.POST.get("name"), request.POST.get("city"))
     return htmx.done(request, f"FC {fc.code} added", drawer=False)
+
+
+@require_POST
+def vendor_code_add(request):
+    import re as _re
+    from .models import VendorCode
+    from .services import audit, require
+    require(request.user, "settings")
+    code = request.POST.get("code", "").strip().upper()
+    if not _re.fullmatch(r"[A-Z0-9]{3,12}", code):
+        raise CommandError("A vendor code is 3–12 letters or digits, as in Vendor Central (e.g. MODEL).")
+    if VendorCode.objects.filter(code=code).exists():
+        raise CommandError(f"Vendor code {code} is already listed.")
+    VendorCode.objects.create(code=code, name=request.POST.get("name", "").strip()[:120])
+    audit("settings", "vendor_codes", f"Vendor code {code} added", request.user, action="configure")
+    return htmx.done(request, f"Vendor code {code} added", drawer=False)
 
 
 @require_POST

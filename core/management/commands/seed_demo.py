@@ -67,7 +67,33 @@ class Command(BaseCommand):
             self.promos()
             self.notices()
             self.messy()
+            self.vendor_codes()
         self.stdout.write(self.style.SUCCESS("Example data loaded."))
+
+    def vendor_codes(self):
+        """Two Amazon vendor codes: audio (personal and home audio) and vision (TV, digital imaging, bundles)."""
+        from core.models import VendorCode
+        from orders.models import PurchaseOrder
+        from payments.models import Payment
+        from promotions.models import Promotion
+        VendorCode.objects.create(code="MEAUD", name="Modern Electronics — audio (personal and home audio & video)")
+        VendorCode.objects.create(code="MEVIS", name="Modern Electronics — vision (TV, digital imaging, bundles)")
+        audio = {"PA", "HAV"}
+        for po in PurchaseOrder.objects.prefetch_related("lines__sku"):
+            first = next(iter(po.lines.all()), None)
+            po.vendor_code = "MEAUD" if first and first.sku.category in audio else "MEVIS"
+            po.save(update_fields=["vendor_code"])
+        for p in Payment.objects.select_related("po"):
+            p.vendor_code = p.po.vendor_code if p.po else "MEVIS"
+            p.save(update_fields=["vendor_code"])
+        Promotion.objects.filter(category__in=audio).update(vendor_code="MEAUD")
+        Promotion.objects.exclude(category__in=audio).update(vendor_code="MEVIS")
+        # Support budgets for the current quarter (Digital imaging deliberately over budget)
+        from promotions.models import Budget
+        from promotions.services import quarter_of
+        y, q = quarter_of(self.now)
+        for cat, sar in (("PA", 40000), ("DI", 500000), ("TV", 120000), ("HAV", 60000), ("Bundle", 40000)):
+            Budget.objects.create(category=cat, year=y, quarter=q, amount_h=sar * 100)
 
     # ---------- helpers ----------
     def reset(self):

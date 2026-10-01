@@ -463,3 +463,12 @@ a.cchip{text-decoration:none}
 .cutover .n{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:600;background:var(--gray-soft);color:var(--muted)}
 .cutover li.done .n{background:var(--ok-soft);color:var(--ok)}
 @media (max-width:600px){.cutover li{grid-template-columns:28px 1fr}.cutover li .btn{grid-column:2;justify-self:start}}
+
+.inline-form{margin:10px 0}.inline-form summary{cursor:pointer;color:var(--primary)}
+details.cartons{margin-top:10px}details.cartons summary{cursor:pointer}
+.aging{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:10px}
+.bar{height:8px;border-radius:4px;background:var(--gray-soft);overflow:hidden}.bar span{display:block;height:100%;background:var(--primary)}.bar span.over{background:var(--bad)}
+tr.sel td{background:var(--primary-soft)}
+.owner{display:flex;align-items:center;gap:4px;margin-right:6px;color:var(--muted)}.owner .sel{height:30px;max-width:190px;font-size:12px}
+.aci-owner{font-size:11px;color:var(--muted)}
+.kpi.rep{cursor:default}.kpi.rep.ok .kpi-v{color:var(--ok)}.kpi.rep.warn .kpi-v{color:var(--warn)}.kpi.rep.bad .kpi-v{color:var(--bad)}

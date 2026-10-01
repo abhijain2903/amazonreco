@@ -2,6 +2,7 @@
 from datetime import timedelta
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from core.services import CommandError, audit, check_version, fmt_sar, next_number, notify, require
@@ -9,14 +10,15 @@ from promotions.models import Promotion
 from rules import engine
 from rules.services import get_cfg
 
-from .models import DebitNote
+from .models import DebitNote, DnLine
 
 
 def evaluate(dn, cfg=None):
     """R10 for one debit note. Returns a dict with status, promo, lines and totals."""
     cfg = cfg or get_cfg()
     promo = Promotion.objects.filter(agreement_no=dn.agreement_no).first() if dn.agreement_no else None
-    lines = [{"sku": l.sku_id, "sku_obj": l.sku, "units": l.units, "rate_h": l.rate_h} for l in dn.lines.select_related("sku")]
+    lines = [{"sku": l.sku_id, "sku_obj": l.sku, "label": l.label or ("Fixed fee" if l.sku_id is None else ""), "units": l.units, "rate_h": l.rate_h}
+             for l in dn.lines.select_related("sku")]
     if not promo:
         charged = sum(l["units"] * l["rate_h"] for l in lines)
         for l in lines:
@@ -24,10 +26,23 @@ def evaluate(dn, cfg=None):
         return {"status": "validated" if dn.validated else "unlinked", "promo": None, "lines": lines,
                 "charged_h": charged, "expected_h": None, "variance_h": None, "date_ok": True}
     pls = {l.sku_id: {"support_h": l.support_h, "sold": l.sold_units} for l in promo.lines.all()}
-    r = engine.dn_check([{k: v for k, v in l.items() if k != "sku_obj"} for l in lines], pls, dn.dn_date, promo.end, cfg)
-    skus = {l["sku"]: l["sku_obj"] for l in lines}
-    for l in r["lines"]:
-        l["sku_obj"] = skus[l["sku"]]
+    # Earlier debit notes on the same agreement (instalments, top-ups): what they already billed
+    earlier = (DebitNote.objects.filter(agreement_no=dn.agreement_no).exclude(pk=dn.pk)
+               .filter(Q(dn_date__lt=dn.dn_date) | Q(dn_date=dn.dn_date, created_at__lt=dn.created_at)))
+    prior, prior_fees = {}, 0
+    for pl in DnLine.objects.filter(dn__in=earlier):
+        if pl.sku_id is None:
+            prior_fees += pl.units * pl.rate_h
+        else:
+            prior[pl.sku_id] = prior.get(pl.sku_id, 0) + pl.units
+    fees = list(promo.fees.all())
+    r = engine.dn_check([{k: v for k, v in l.items() if k not in ("sku_obj", "label")} for l in lines], pls, dn.dn_date, promo.end, cfg,
+                        prior=prior, fees_h=sum(f.amount_h for f in fees) if fees else None, prior_fees_h=prior_fees,
+                        instalments=promo.dn_instalments, promo_start=promo.start)
+    by_pos = list(lines)
+    for i, l in enumerate(r["lines"]):
+        l["sku_obj"], l["label"] = by_pos[i]["sku_obj"], by_pos[i]["label"]
+    r["earlier"] = list(earlier.order_by("dn_date"))
     if dn.validated:
         status = "disputed" if dn.disputed_h > 0 else "validated"
     else:
@@ -46,8 +61,9 @@ def get_dn(dn_no, lock=False):
 def create_dn(dn_no, agreement, dn_date, lines, user=None, name=None, source="file upload", at=None):
     """lines: [(sku, units, rate_h)]"""
     dn = DebitNote.objects.create(dn_no=dn_no, agreement_no=str(agreement), dn_date=dn_date)
-    for sku, u, r in lines:
-        dn.lines.create(sku=sku, units=u, rate_h=r)
+    for line in lines:
+        sku, u, r = line[:3]
+        dn.lines.create(sku=sku, units=u, rate_h=r, label=(line[3] if len(line) > 3 else "") if sku is None else "")
     audit("dn", dn_no, f"Debit note received from Amazon for agreement {agreement} ({source})", user, name=name,
           system=user is None, action="import", at=at)
     return dn

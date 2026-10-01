@@ -7,7 +7,8 @@ from payments.models import Payment
 from .actions import action_items
 
 NAV = [
-    ("Overview", [("dashboard", "/", "Dashboard", "home"), ("action", "/action/", "Action Center", "inbox")]),
+    ("Overview", [("dashboard", "/", "Dashboard", "home"), ("action", "/action/", "Action Center", "inbox"),
+                  ("reports", "/reports/", "Reports", "chart")]),
     ("Sell-in", [("pos", "/pos/", "Purchase Orders", "po"), ("ship", "/ship/", "Shipments & Invoices", "truck"),
                  ("pay", "/pay/", "Payments & Disputes", "wallet")]),
     ("Sell-out", [("promos", "/promos/", "Promotions", "tag"), ("dns", "/dns/", "Debit Notes", "receipt"),

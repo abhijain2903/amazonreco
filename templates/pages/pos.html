@@ -3,11 +3,12 @@
 <div class="ph"><div><h1>Purchase Orders</h1><p>Amazon POs from arrival to invoice. Price and stock checks run the moment a PO lands.</p></div>
 <div class="ph-act">{% include "partials/export_btn.html" %}<button class="btn" hx-get="/uploads/new/?type=U4" hx-target="#modal" {% perm 'upload' %}>{% icon 'upload' %}<span>Upload POs</span></button></div></div>
 <div class="kpis">{% for k in kpis %}<a class="kpi {% if k.alert %}alert{% endif %}" href="{{ k.url }}"><span class="kpi-l">{{ k.l }}</span><span class="kpi-v">{{ k.v }}</span><span class="kpi-s">{{ k.s }}</span></a>{% endfor %}</div>
-{% if view == 'table' %}<div class="tabs" role="tablist">{% for t in tabs %}<a class="tab {% if t.id == tab %}on{% endif %}" href="?tab={{ t.id }}&q={{ q|urlencode }}&fc={{ fc }}">{{ t.label }}<span class="ct">{{ t.count }}</span></a>{% endfor %}</div>{% endif %}
-<form class="fbar" hx-get="/pos/" hx-target="#view" hx-select="#view" hx-swap="outerHTML" hx-trigger="input changed delay:300ms from:#po-q, change from:#po-fc" hx-push-url="true">
+{% if view == 'table' %}<div class="tabs" role="tablist">{% for t in tabs %}<a class="tab {% if t.id == tab %}on{% endif %}" href="?tab={{ t.id }}&q={{ q|urlencode }}&fc={{ fc }}&vc={{ vc }}">{{ t.label }}<span class="ct">{{ t.count }}</span></a>{% endfor %}</div>{% endif %}
+<form class="fbar" hx-get="/pos/" hx-target="#view" hx-select="#view" hx-swap="outerHTML" hx-trigger="input changed delay:300ms from:#po-q, change from:#po-fc, change from:#po-vc" hx-push-url="true">
   <input type="hidden" name="tab" value="{{ tab }}"><input type="hidden" name="view" value="{{ view }}">
   <div class="fsearch">{% icon 'search' %}<input class="inp" id="po-q" name="q" placeholder="PO, SAP order, model or ASIN" value="{{ q }}" aria-label="Search purchase orders"></div>
   <select class="sel" id="po-fc" name="fc" aria-label="Fulfilment centre"><option value="">All fulfilment centres</option>{% for f in fcs %}<option value="{{ f.code }}" {% if f.code == fc %}selected{% endif %}>{{ f.code }}</option>{% endfor %}</select>
+  {% if vcodes|length > 1 %}<select class="sel" id="po-vc" name="vc" aria-label="Vendor code"><option value="">All vendor codes</option>{% for v in vcodes %}<option value="{{ v.code }}" {% if v.code == vc %}selected{% endif %}>{{ v.code }}</option>{% endfor %}</select>{% endif %}
   <span class="spacer"></span>
   <div class="seg" role="group" aria-label="View"><a class="{% if view == 'table' %}on{% endif %}" href="?view=table&tab={{ tab }}" style="display:flex;align-items:center;gap:6px;height:32px;padding:0 11px;text-decoration:none;color:inherit">{% icon 'table' %}Table</a><a class="{% if view == 'board' %}on{% endif %}" href="?view=board" style="display:flex;align-items:center;gap:6px;height:32px;padding:0 11px;text-decoration:none;color:inherit;border-left:1px solid var(--border2)">{% icon 'board' %}Board</a></div>
 </form>

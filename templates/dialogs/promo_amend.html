@@ -1,0 +1,19 @@
+{% extends "dialogs/_modal.html" %}
+{% block label %}Amend promotion{% endblock %}
+{% block mtitle %}Amend {{ p.mecl_ref }}{% endblock %}{% block msub %}<p>{{ p.name }} · agreement {{ p.agreement_no }}</p>{% endblock %}
+{% block form_open %}<form hx-post="/promos/{{ p.mecl_ref }}/amend/" hx-swap="none"><input type="hidden" name="version" value="{{ p.version }}">{% endblock %}
+{% block mbody %}
+<div class="banner info">{% icon 'info' %}<span class="t">Record what Amazon agreed. Only fields you change are recorded; the debit-note check uses the amended terms.</span></div>
+<div class="fgrid"><div class="field"><label for="am-end">End date</label><input class="inp" type="date" id="am-end" name="end" value="{{ end }}"></div>
+<div class="field"><label for="am-r">Reason</label><input class="inp" id="am-r" name="reason" required placeholder="e.g. Amazon extended the deal by a week"></div></div>
+<div class="tw"><table class="dt compact"><thead><tr><th>Model</th><th class="num">Support / unit SAR</th></tr></thead><tbody>
+{% for l in lines %}<tr><td>{{ l.sku.model_no }}</td><td class="num"><input class="inp sm qty" type="number" step="0.01" min="0.01" name="s-{{ l.pk }}" value="{{ l.support_h|n2|cut:',' }}" aria-label="Support for {{ l.sku.model_no }}"></td></tr>{% endfor %}</tbody></table></div>
+<div class="fgrid"><div class="field"><label for="am-sku">Add a model</label><select class="sel" id="am-sku" name="add_sku"><option value="">—</option>{% for s in opts %}<option value="{{ s.sku_code }}">{{ s.model_no }}</option>{% endfor %}</select></div>
+<div class="field"><label for="am-sup">Support / unit SAR</label><input class="inp" type="number" step="0.01" min="0" id="am-sup" name="add_support"></div>
+<div class="field"><label for="am-u">Expected units</label><input class="inp" type="number" min="0" id="am-u" name="add_units"></div></div>
+<div class="fgrid"><div class="field"><label for="am-fl">Add a fixed fee</label><input class="inp" id="am-fl" name="fee_label" placeholder="e.g. Prime Day deal fee"></div>
+<div class="field"><label for="am-fa">Fee SAR</label><input class="inp" type="number" step="0.01" min="0" id="am-fa" name="fee_amount"></div></div>
+<label class="row small" style="gap:6px"><input type="checkbox" name="instalments" value="1" {% if p.dn_instalments %}checked{% endif %}> Amazon bills this promotion in instalments (several debit notes)</label>
+{% endblock %}
+{% block mfoot %}<span class="hint"></span><button type="button" class="btn" data-close="modal">Cancel</button><button class="btn pri" type="submit" {% perm 'promo' %}>Record amendment</button>{% endblock %}
+{% block form_close %}</form>{% endblock %}

@@ -13,13 +13,14 @@ class Claim(Base):
 
     claim_no = models.CharField(max_length=20, unique=True)
     promotion = models.ForeignKey(Promotion, on_delete=models.PROTECT, related_name="claims")
-    debit_note = models.ForeignKey(DebitNote, on_delete=models.PROTECT, related_name="claims")
+    debit_note = models.ForeignKey(DebitNote, on_delete=models.PROTECT, related_name="claims")  # one claim per debit note
     amount_h = models.BigIntegerField()
     sent_at = models.DateTimeField()
     status = models.CharField(max_length=12, choices=CLAIM_STATUS, default="sent", db_index=True)
     cn_no = models.CharField(max_length=30, blank=True)
     cn_h = models.BigIntegerField(null=True, blank=True)
     cn_date = models.DateTimeField(null=True, blank=True)
+    batch_no = models.CharField(max_length=20, blank=True, db_index=True, help_text="Claims sent together in one batch")
 
     class Meta:
         ordering = ["-sent_at"]

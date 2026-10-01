@@ -27,8 +27,8 @@ ORDER = ["draft", "submitted", "approved", "live", "waiting_dn", "dn_overdue", "
 
 def promo_list(request):
     tab = htmx.pick(request, "tab", [k for k, _, _ in GROUPS], "all")
-    view = htmx.pick(request, "view", ["table", "board", "timeline"], "table")
-    cat, q = request.GET.get("cat", ""), request.GET.get("q", "").strip()
+    view = htmx.pick(request, "view", ["table", "board", "timeline", "budget"], "table")
+    cat, q, vc = request.GET.get("cat", ""), request.GET.get("q", "").strip(), request.GET.get("vc", "")
     cfg, now = get_cfg(), timezone.now()
     allp = list(Promotion.objects.prefetch_related("lines"))
     for p in allp:
@@ -36,6 +36,8 @@ def promo_list(request):
     rows = allp
     if cat:
         rows = [p for p in rows if p.category == cat]
+    if vc:
+        rows = [p for p in rows if p.vendor_code == vc]
     if q:
         ql = q.lower()
         rows = [p for p in rows if ql in p.name.lower() or ql in p.mecl_ref.lower() or ql in (p.agreement_no or "")]
@@ -52,12 +54,29 @@ def promo_list(request):
             dict(l="DN to validate", v=cnt(["dn_received"]), s="Debit notes received", url="/dns/?tab=todo"),
             dict(l="Support committed", v=f"{round(sum(p.support for p in committed) / 100):,}", s="SAR · approved and live", url="?tab=run")]
     from core.exports import sar, wants_export, xlsx
+    if wants_export(request) and view == "budget":
+        y, qn = svc.quarter_of(now)
+        y, qn = int(request.GET.get("y") or y), int(request.GET.get("qn") or qn)
+        return xlsx(f"Budget_Q{qn}_{y}", ["Category", "Promotions", "Budget SAR", "Committed SAR", "Billed by Amazon SAR", "Recovered SAR", "Left SAR"],
+                    [[r["name"], r["n"], sar(r["budget"]), sar(r["committed"]), sar(r["billed"]), sar(r["recovered"]), sar(r["left"])]
+                     for r in svc.budget_report(y, qn)])
     if wants_export(request):
         return xlsx(f"Promotions_{tab}", ["MECL ref", "Promotion", "Type", "Category", "Start", "End", "Agreement #", "Support SAR", "DN due", "Stage", "Owner"],
                     [[p.mecl_ref, p.name, p.get_promo_type_display(), p.category, p.start, p.end, p.agreement_no or "", sar(p.support), p.dn_due, STAGE_LABELS[p.st],
                       p.owner_name] for p in rows])
-    ctx = dict(rows=rows, tab=tab, view=view, cat=cat, q=q, kpis=kpis, cats=list(CATEGORY_NAMES),
+    from core.models import VendorCode
+    ctx = dict(rows=rows, tab=tab, view=view, cat=cat, q=q, vc=vc, vcodes=VendorCode.objects.all(), kpis=kpis, cats=list(CATEGORY_NAMES),
                tabs=[dict(id=k, label=l, count=counts[k]) for k, l, _ in GROUPS])
+    if view == "budget":
+        y, qn = svc.quarter_of(now)
+        try:
+            y, qn = int(request.GET.get("y", y)), int(request.GET.get("qn", qn))
+        except ValueError:
+            pass
+        qn = min(4, max(1, qn))
+        rep = svc.budget_report(y, qn)
+        prev, nxt = ((y, qn - 1) if qn > 1 else (y - 1, 4)), ((y, qn + 1) if qn < 4 else (y + 1, 1))
+        ctx.update(budget=rep, by=y, bq=qn, prev=prev, nxt=nxt, btot={k: sum((r[k] or 0) for r in rep) for k in ("budget", "committed", "billed", "recovered")})
     if view == "board":
         ctx["board"] = [dict(st=s, label=STAGE_LABELS[s], tone=STAGE_TONES[s], items=[p for p in rows if p.st == s][:8],
                              more=max(0, sum(1 for p in rows if p.st == s) - 8), n=sum(1 for p in rows if p.st == s)) for s in ORDER]
@@ -110,10 +129,15 @@ def drawer(request, ref):
     p = get_promo(ref)
     st = stage_of(p)
     tab = htmx.pick(request, "tab", ["models", "dn", "claim", "timeline", "notes", "docs"], "models")
-    dn = DebitNote.objects.filter(agreement_no=p.agreement_no).first() if p.agreement_no else None
-    c = Claim.objects.filter(promotion=p).first()
+    dns = list(DebitNote.objects.filter(agreement_no=p.agreement_no).order_by("dn_date", "created_at")) if p.agreement_no else []
+    want = request.GET.get("dn")
+    dn = (next((d for d in dns if d.dn_no == want), None) or next((d for d in dns if not d.validated), None)
+          or (dns[-1] if dns else None))
+    claims = list(Claim.objects.filter(promotion=p).order_by("sent_at", "claim_no"))
+    c = next((x for x in claims if x.status in ("sent", "shortfall")), None) or (claims[-1] if claims else None)
     base = f"/records/promo/{p.mecl_ref}/"
-    ctx = dict(p=p, st=st, tab=tab, base=base, url=f"{base}?tab={tab}", dn=dn, c=c, cns=list(c.credit_notes.all()) if c else [], support=support_h(p), lines=list(p.lines.select_related("sku")),
+    from core.views import owner_ctx
+    ctx = dict(p=p, st=st, tab=tab, base=base, url=f"{base}?tab={tab}", dn=dn, c=c, dns=dns, claims=claims, **owner_ctx("promo", p.mecl_ref), cns=list(c.credit_notes.all()) if c else [], support=support_h(p), lines=list(p.lines.select_related("sku")),
                steps=_steps(p, st, dn, c),
                chain=[dict(l="MECL ref", v=p.mecl_ref), dict(l="Amazon agreement", v=p.agreement_no), dict(l="Debit note", v=dn and dn.dn_no, tab="dn"),
                       dict(l="Claim", v=c and c.claim_no, tab="claim"), dict(l="Credit note", v=c and c.cn_no, tab="claim")],
@@ -129,7 +153,7 @@ def drawer(request, ref):
     if dn and (tab == "dn" or st == "dn_received"):
         ctx.update(dn_panel(dn, p))
     if tab == "timeline":
-        ids = [("promotion", p.mecl_ref)] + ([("dn", dn.dn_no)] if dn else []) + ([("claim", c.claim_no)] if c else [])
+        ids = [("promotion", p.mecl_ref)] + [("dn", d.dn_no) for d in dns] + [("claim", x.claim_no) for x in claims]
         from core.models import AuditEvent
         qq = Q()
         for e, i in ids:
@@ -144,6 +168,54 @@ def drawer(request, ref):
 
 
 # ---------- commands ----------
+@require_POST
+def fee(request, ref):
+    amt = request.POST.get("amount")
+    svc.add_fee(request.user, ref, request.POST.get("label", ""), to_h(amt) if amt not in (None, "") else None, request.POST.get("version"))
+    return htmx.done(request, "Fixed fee added")
+
+
+@require_POST
+def instalments(request, ref):
+    p = svc.set_instalments(request.user, ref, request.POST.get("on") == "1")
+    return htmx.done(request, "Billed in instalments" if p.dn_instalments else "Billed with one debit note", "info")
+
+
+def amend(request, ref):
+    p = get_promo(ref)
+    if request.method == "POST":
+        P = request.POST
+        end = None
+        if P.get("end"):
+            try:
+                end = timezone.make_aware(datetime.strptime(P["end"], "%Y-%m-%d").replace(hour=23, minute=59))
+            except ValueError:
+                raise CommandError("Pick a valid end date.")
+        support = {k[2:]: to_h(v) for k, v in P.items() if k.startswith("s-") and v not in (None, "")}
+        add = None
+        if P.get("add_sku"):
+            s = Sku.objects.filter(sku_code=P["add_sku"]).first()
+            if not s:
+                raise CommandError("Pick a model to add.")
+            add = (s, to_h(P.get("add_support") or 0), int(float(P.get("add_units") or 0)))
+        fee = (P.get("fee_label", "").strip(), to_h(P.get("fee_amount"))) if P.get("fee_label") and P.get("fee_amount") else None
+        p, no = svc.amend_promotion(request.user, ref, P.get("reason", ""), end=end, support=support, add=add, fee=fee,
+                                    instalments=P.get("instalments") == "1", version=P.get("version"))
+        return htmx.done(request, f"Amendment {no} recorded", close_modal=True)
+    if p.stage not in svc.AMENDABLE:
+        raise CommandError("Only approved promotions are amended.")
+    lines = list(p.lines.select_related("sku"))
+    opts = Sku.objects.filter(category=p.category).exclude(pk__in=[l.sku_id for l in lines])
+    return render(request, "dialogs/promo_amend.html", dict(p=p, lines=lines, opts=opts, end=timezone.localtime(p.end).date().isoformat()))
+
+
+@require_POST
+def budget_save(request):
+    amt = request.POST.get("amount")
+    b = svc.set_budget(request.user, request.POST.get("category"), request.POST.get("year") or 0, request.POST.get("quarter") or 0,
+                       to_h(amt) if amt not in (None, "") else None)
+    return htmx.done(request, f"Budget for {b.category} Q{b.quarter} {b.year} saved")
+
 @require_POST
 def submit(request, ref):
     p, f = svc.submit_promotion(request.user, ref, request.POST.get("version"))

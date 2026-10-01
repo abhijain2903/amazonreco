@@ -165,6 +165,8 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 MEDIA_URL = "/media/"
 MEDIA_ROOT = Path(env("HUB_MEDIA_ROOT", str(BASE_DIR / "media")))
+HUB_PAYMENT_TERMS_DAYS = int(env("HUB_PAYMENT_TERMS_DAYS", "60"))  # Amazon payment terms, for the ageing report
+HUB_GS1_PREFIX = env("HUB_GS1_PREFIX", "6280000")  # GS1 company prefix for SSCC carton labels (KSA prefixes start 628)
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     # Hashed file names in production, so a new release is never served from a browser's cached hub.js / hub.css.

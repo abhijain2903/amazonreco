@@ -21,8 +21,9 @@ def claim_list(request):
     tab = htmx.pick(request, "tab", [k for k, _ in TABS], "toclaim")
     to_claim = []
     for p in Promotion.objects.filter(stage="dn_validated"):
-        if stage_of(p) == "dn_validated":
-            p.dn = DebitNote.objects.filter(agreement_no=p.agreement_no, validated=True).first()
+        dns = svc.unclaimed_dns(p) if stage_of(p) == "dn_validated" else []
+        if dns:
+            p.dns, p.dn, p.claim_h = dns, dns[0], sum(d.approved_h for d in dns)
             to_claim.append(p)
     C = list(Claim.objects.select_related("promotion"))
     sent = [c for c in C if c.status == "sent"]
@@ -42,7 +43,7 @@ def claim_list(request):
     if wants_export(request):
         if tab == "toclaim":
             return xlsx("Claims_to_claim", ["MECL ref", "Promotion", "Category", "DN", "Claim SAR"],
-                        [[p.mecl_ref, p.name, p.category, p.dn.dn_no if p.dn else "", sar(p.dn.approved_h) if p.dn else None] for p in to_claim])
+                        [[p.mecl_ref, p.name, p.category, ", ".join(d.dn_no for d in p.dns), sar(p.claim_h)] for p in to_claim])
         return xlsx(f"Claims_{tab}", ["Claim", "MECL ref", "Category", "Sent", "Claim SAR", "Credit note", "CN SAR", "Gap SAR", "Status"],
                     [[c.claim_no, c.promotion.mecl_ref, c.promotion.category, c.sent_at, sar(c.amount_h), c.cn_no, sar(c.cn_h), sar(c.gap_h),
                       c.get_status_display()] for c in rows])
@@ -67,6 +68,30 @@ def cn(request, claim_no):
     left = c.amount_h - (c.cn_h or 0)
     return render(request, "dialogs/cn.html", dict(c=c, left_h=max(left, 0), next_cn=f"CN-{peek_number('credit_note', 552010)}", today=timezone.localdate().isoformat(),
                                                     tol=get_cfg().tol_h()))
+
+
+@require_POST
+def batch(request):
+    b, cs, f = svc.generate_batch(request.user, request.POST.getlist("ref"))
+    return htmx.done(request, f"Batch {b}: {len(cs)} claims in one file", file=f)
+
+
+def batch_cn(request, batch_no):
+    cs = list(Claim.objects.filter(batch_no=batch_no).select_related("promotion").order_by("claim_no"))
+    if request.method == "POST":
+        amount = request.POST.get("amount")
+        d = request.POST.get("date")
+        when = timezone.make_aware(datetime.strptime(d, "%Y-%m-%d").replace(hour=10)) if d else None
+        cn_no = request.POST.get("cn_no", "").strip()
+        done = svc.record_batch_cn(request.user, batch_no, cn_no, to_h(amount) if amount not in (None, "") else None, when)
+        if cn_no == f"CN-{peek_number('credit_note', 552010)}":
+            next_number("credit_note", 552010)
+        short = [c for c in done if c.status == "shortfall"]
+        return htmx.done(request, f"Credit note split over {len(done)} claims" + (f"; {len(short)} short" if short else ", all closed"),
+                         "bad" if short else "ok", close_modal=True)
+    owed = sum(c.amount_h - (c.cn_h or 0) for c in cs if c.status in ("sent", "shortfall"))
+    return render(request, "dialogs/batch_cn.html", dict(batch=batch_no, cs=cs, owed=owed, next_cn=f"CN-{peek_number('credit_note', 552010)}",
+                                                         today=timezone.localdate().isoformat()))
 
 
 @require_POST

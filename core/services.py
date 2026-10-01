@@ -1,6 +1,7 @@
 """Shared helpers for commands: errors, audit, notifications, numbering, files."""
 import csv
 import io
+import re
 from decimal import ROUND_HALF_UP, Decimal
 
 from django.db import transaction
@@ -78,10 +79,81 @@ def audit(entity, entity_id, text, user=None, *, action="", system=False, name=N
     )
 
 
-def notify(text, tone="info", link=None, at=None):
+# Who an alert is for, from what it links to: (record type, tab) → roles. Admins and managers see everything.
+ALERT_ROLES = {("po", "lines"): ["PIC"], ("po", "shipment"): ["Logistics", "PIC"], ("po", "invoice"): ["Finance", "PIC"],
+               ("po", ""): ["PIC"], ("promo", "claim"): ["Product", "Finance"], ("promo", "dn"): ["PIC", "Finance"],
+               ("promo", ""): ["Product", "PIC"], ("dn", ""): ["PIC", "Finance"], ("dispute", ""): ["Finance", "PIC"]}
+
+
+def notify(text, tone="info", link=None, at=None, roles=None, user=None):
+    """An in-app alert. Routed to the roles that own the linked work (or to one person for mentions and
+    assignments); the person assigned to the record also gets it."""
     lt, li, tab = (list(link) + ["", "", ""])[:3] if link else ("", "", "")
-    return Notification.objects.create(text=text, tone=tone, link_type=lt, link_id=str(li),
-                                       link_tab=tab or "", at=at or timezone.now())
+    if roles is None and user is None:
+        roles = ALERT_ROLES.get((lt, tab or ""), ALERT_ROLES.get((lt, ""), []))
+    n = Notification.objects.create(text=text, tone=tone, link_type=lt, link_id=str(li), link_tab=tab or "",
+                                    at=at or timezone.now(), roles=roles or [], user=user)
+    if lt and user is None:
+        from .models import Assignment
+        a = Assignment.objects.filter(entity=lt, entity_id=str(li)).select_related("user").first()
+        if a and not (set(a.user.roles or []) & set(roles or [])):
+            Notification.objects.create(text=text, tone=tone, link_type=lt, link_id=str(li), link_tab=tab or "", at=n.at, user=a.user)
+    return n
+
+
+def visible_alerts(user):
+    """Alerts this person sees: their own (mentions, assignments) plus those for their roles — or everything if they
+    chose that, or are an admin / manager."""
+    from django.db.models import Q
+    qs = Notification.objects.all()
+    if user.alert_scope == "all" or set(user.roles or []) & {"Admin", "Manager"} or user.is_superuser:
+        return qs.filter(Q(user__isnull=True) | Q(user=user))
+    return qs.filter(Q(user=user) | Q(user__isnull=True, roles=[]) | Q(user__isnull=True, roles__overlap=list(user.roles or [])))
+
+
+def unread_alerts(user):
+    return visible_alerts(user).filter(read=False).exclude(read_by=user)
+
+
+MENTION = re.compile(r"@([A-Za-z][\w.-]{1,30})")
+
+
+def mentioned_users(text):
+    """@username or @firstname (case-insensitive) → active users."""
+    from identity.models import User
+    out = []
+    for tok in dict.fromkeys(m.lower().rstrip(".") for m in MENTION.findall(text or "")):
+        u = (User.objects.filter(is_active=True, username__iexact=tok).first()
+             or User.objects.filter(is_active=True, first_name__iexact=tok).first()
+             or User.objects.filter(is_active=True, display_name__istartswith=tok + " ").first())
+        if u and u not in out:
+            out.append(u)
+    return out
+
+
+@transaction.atomic
+def assign(user, entity, key, to_username):
+    """Give a record to one person (or back to the role with an empty name). Anyone who can work on records can."""
+    from identity.models import User
+    from .models import Assignment
+    if not user.roles and not user.is_superuser:
+        raise CommandError("Only team members can assign work.")
+    if not to_username:
+        Assignment.objects.filter(entity=entity, entity_id=key).delete()
+        audit(AUDIT_ENTITY.get(entity, entity), key, "Unassigned: back to the role", user, action="assign")
+        return None
+    to = User.objects.filter(username=to_username, is_active=True).first()
+    if not to:
+        raise CommandError("Pick a person.")
+    Assignment.objects.update_or_create(entity=entity, entity_id=key, defaults=dict(user=to, by_name=user.name))
+    audit(AUDIT_ENTITY.get(entity, entity), key, f"Assigned to {to.name}", user, action="assign")
+    if to != user:
+        notify(f"{user.name} assigned {LABEL.get(entity, entity)} {key} to you", "info", (entity, key, ""), user=to)
+    return to
+
+
+AUDIT_ENTITY = {"promo": "promotion"}
+LABEL = {"po": "PO", "promo": "promotion", "dispute": "dispute", "dn": "debit note"}
 
 
 def timeline(entity, *ids):

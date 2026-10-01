@@ -84,6 +84,40 @@ def set_asn_qty(user, po_no, sku_code, qty):
     dl.save()
 
 
+def sscc(serial):
+    """SSCC-18: extension digit, GS1 company prefix, serial reference, mod-10 check digit."""
+    body = ("0" + settings.HUB_GS1_PREFIX + str(serial).zfill(16 - len(settings.HUB_GS1_PREFIX)))[:17]
+    total = sum(int(d) * (3 if i % 2 == 0 else 1) for i, d in enumerate(reversed(body)))
+    return body + str((10 - total % 10) % 10)
+
+
+def build_cartons(sh):
+    """Carton plan for the ASN. SKUs with a case pack go in whole cases (plus one part case); the rest are spread over
+    the remaining cartons SAP reported. One SSCC label per carton."""
+    from .models import Carton
+    plan, loose = [], []
+    for l in sh.lines.select_related("sku").order_by("created_at"):
+        cp = l.sku.case_pack or 1
+        if l.qty <= 0:
+            continue
+        if cp > 1:
+            full, rest = divmod(l.qty, cp)
+            plan += [(l.sku, cp)] * full + ([(l.sku, rest)] if rest else [])
+        else:
+            loose.append(l)
+    free = max(1, sh.cartons - len(plan)) if loose else 0
+    for l in loose:
+        n = max(1, min(l.qty, round(free * l.qty / sum(x.qty for x in loose)) or 1))
+        base, extra = divmod(l.qty, n)
+        plan += [(l.sku, base + (1 if i < extra else 0)) for i in range(n)]
+    Carton.objects.filter(shipment=sh).delete()
+    for i, (sku, q) in enumerate(plan, 1):
+        Carton.objects.create(shipment=sh, seq=i, sscc=sscc(next_number("sscc", 1000)), sku=sku, qty=q)
+    sh.cartons = len(plan)
+    sh.save(update_fields=["cartons", "updated_at"])
+    return plan
+
+
 def _submit_asn(po, at, user=None, name=None):
     d = delivery_of(po)
     sh = Shipment.objects.create(po=po, asn_no=f"ASN{next_number('asn', 7104400)}", sap_delivery_no=d.delivery_no,
@@ -93,6 +127,7 @@ def _submit_asn(po, at, user=None, name=None):
         q = dl.asn_qty if dl.asn_qty is not None else dl.qty
         sh.lines.create(sku=dl.sku, qty=q)
         total += q
+    build_cartons(sh)
     po.stage = "asn"
     po.bump()
     po.save()
@@ -115,32 +150,80 @@ def submit_asn(user, po_no, version=None):
         [sh.asn_no, po.po_no, po.fc.code, timezone.localtime(sh.ship_date).date().isoformat(), sh.cartons, l.sku.asin, l.qty]
         for l in sh.lines.select_related("sku")]
     f = save_file("asn", f"ASN_{sh.asn_no}.csv", rows, "po", po.po_no)
+    labels = [["carton", "of", "sscc", "asn_no", "po_no", "ship_to", "asin", "model_no", "qty"]] + [
+        [c.seq, sh.cartons, c.sscc, sh.asn_no, po.po_no, po.fc.code, c.sku.asin, c.sku.model_no, c.qty]
+        for c in sh.carton_list.select_related("sku")]
+    save_file("labels", f"Carton_labels_{sh.asn_no}.csv", labels, "po", po.po_no)
     from integrations.connectors import get_adapter
     get_adapter("amazon_vc").push("asn", f)
     return sh, f
 
 
-def _book_slot(po, at, slot_id, start, window, user=None, name=None):
+def _book_slot(po, at, slot_id, start, window, user=None, name=None, freight="prepaid", reason=""):
     sh = shipment_of(po)
-    sh.slot_id, sh.slot_start, sh.slot_window = slot_id, start, window
+    again = po.stage == "slot" or bool(sh.slot_outcome)
+    old = sh.slot_id
+    sh.slot_id, sh.slot_start, sh.slot_window, sh.freight = slot_id, start, window, freight
+    if again:
+        sh.reschedules += 1
+    sh.slot_outcome, sh.slot_note = "", ""
     sh.save()
     po.stage = "slot"
     po.bump()
     po.save()
-    audit("po", po.po_no, f"Carrier Central slot {slot_id} booked for {timezone.localtime(start):%d %b, %H:%M}", user,
-          name=name, action="slot", at=at)
+    when = f"{timezone.localtime(start):%d %b, %H:%M}"
+    if freight == "collect":
+        text = f"Amazon pickup {slot_id} (routing request) scheduled for {when}"
+    else:
+        text = f"Carrier Central slot {slot_id} booked for {when}"
+    if again:
+        text = ("Rescheduled: " + text + (f" (was {old})" if old and old != slot_id else "")
+                + (f". Reason: {reason}" if reason else ""))
+    audit("po", po.po_no, text, user, name=name, action="reschedule" if again else "slot", at=at, reason=reason)
 
 
 @transaction.atomic
-def book_slot(user, po_no, slot_id, start, window, version=None):
+def book_slot(user, po_no, slot_id, start, window, version=None, freight="prepaid", reason=""):
+    """Prepaid: ME books a Carrier Central appointment. Collect: ME submits a routing request and Amazon schedules a
+    pickup (the reference goes in slot_id). Also used to reschedule a booked slot."""
     require(user, "ship")
     po = get_po(po_no, lock=True)
     check_version(po, version)
-    if po.stage != "asn":
-        raise CommandError("A slot can be booked once the ASN is sent.")
+    if po.stage not in ("asn", "slot"):
+        raise CommandError("A slot can be booked once the ASN is sent, and changed until delivery.")
     if not slot_id.strip():
-        raise CommandError("Enter the Carrier Central slot ID.")
-    _book_slot(po, timezone.now(), slot_id.strip(), start, window, user)
+        raise CommandError("Enter the Amazon reference (ARN / pickup ID)." if freight == "collect" else "Enter the Carrier Central slot ID.")
+    if freight not in ("prepaid", "collect"):
+        freight = "prepaid"
+    _book_slot(po, timezone.now(), slot_id.strip(), start, window, user, freight=freight, reason=(reason or "").strip()[:200])
+    return po
+
+
+@transaction.atomic
+def slot_failed(user, po_no, outcome, reason, version=None):
+    """The truck missed the appointment, or Amazon refused the delivery. The slot is released; book a new one."""
+    require(user, "ship")
+    po = get_po(po_no, lock=True)
+    check_version(po, version)
+    if po.stage != "slot":
+        raise CommandError("Only a booked slot can be missed or refused.")
+    if outcome not in ("missed", "refused"):
+        raise CommandError("Pick missed or refused.")
+    reason = (reason or "").strip()[:200]
+    if not reason:
+        raise CommandError("Say what happened, e.g. truck late at the gate / Amazon refused: labels unreadable.")
+    sh = shipment_of(po)
+    old = sh.slot_id
+    sh.slot_outcome, sh.slot_note = outcome, reason
+    sh.slot_id, sh.slot_start, sh.slot_window = "", None, ""
+    sh.save()
+    po.stage = "asn"
+    po.bump()
+    po.save()
+    audit("po", po.po_no, f"Appointment {old} {'missed' if outcome == 'missed' else 'refused by Amazon'}: {reason}. Book a new slot",
+          user, action=outcome, reason=reason)
+    from core.services import notify
+    notify(f"{po.po_no}: delivery {'missed' if outcome == 'missed' else 'refused'}. Re-book the slot", "bad", ("po", po.po_no, "shipment"))
     return po
 
 

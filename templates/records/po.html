@@ -4,7 +4,7 @@
 {% block title %}{{ po.po_no }}{% endblock %}
 {% block chip %}{% po_chip po %}{% endblock %}
 {% block head %}
-<div class="sum"><span>FC <b>{{ po.fc.code }}</b></span><span>Ordered <b>{{ po.order_date|fd }}</b></span>
+<div class="sum">{% if po.vendor_code %}<span>Vendor code <b class="mono">{{ po.vendor_code }}</b></span>{% endif %}<span>FC <b>{{ po.fc.code }}</b></span><span>Ordered <b>{{ po.order_date|fd }}</b></span>
 {% if po.stage == 'new' %}<span>Confirm by <b class="{% if state == 'overdue' %}bad-t{% endif %}">{{ po.confirm_by|fdt }}</b> <span class="{% if state == 'overdue' %}bad-t{% endif %}">({{ po.confirm_by|due }})</span></span>{% endif %}
 <span>Ship window <b>{{ po.window_start|fd }} – {{ po.window_end|fd }}</b></span><span>Value <b>{{ value|sar }}</b></span></div>
 {% include "partials/chain.html" %}
@@ -18,12 +18,12 @@
     {% if issues %}<div class="banner warn">{% icon 'alert' %}<span class="t"><b>{{ issues }} line{{ issues|pluralize }} need{{ issues|pluralize:"s," }} a decision.</b> Green lines are ready to accept. Amber is short on stock. Red has a cost that differs from the agreed price list.</span></div>
     {% else %}<div class="banner ok">{% icon 'check' %}<span class="t"><b>All lines passed price and stock checks.</b> Confirm to send the acknowledgement.</span></div>{% endif %}
     <form id="po-lines" hx-post="/pos/{{ po.po_no }}/lines/" hx-trigger="change" hx-swap="none"><input type="hidden" id="po-lines-v" name="version" value="{{ po.version }}">
-    <div class="tw lines-in"><table class="dt" style="min-width:980px"><thead><tr><th></th><th>Model</th><th class="num">Ordered</th><th class="num">Free stock</th><th class="num">PO cost</th><th class="num">Agreed</th><th>Decision</th><th class="num">Confirm qty</th><th>Reason</th></tr></thead><tbody>
+    <div class="tw lines-in"><table class="dt" style="min-width:980px"><thead><tr><th></th><th>Model</th><th class="num">Ordered</th><th class="num">Available</th><th class="num">PO cost</th><th class="num">Agreed</th><th>Decision</th><th class="num">Confirm qty</th><th>Reason</th></tr></thead><tbody>
     {% for r in lrows %}{% with l=r.l c=r.c %}
     <tr class="{% if c.tone == 'bad' %}err{% elif c.tone == 'warn' %}warnrow{% endif %}">
       <td>{% if c.tone == 'ok' %}{% icon 'check' 'ico-ok' %}{% elif c.tone == 'warn' %}{% icon 'alert' 'ico-warn' %}{% else %}{% icon 'x' 'ico-bad' %}{% endif %}</td>
       <td><div><b style="font-weight:500">{{ l.sku.model_no }}</b><div class="small muted">{{ l.sku.description }} · <span class="mono">{{ l.sku.sku_code }}</span></div><div class="small faint mono">{{ l.asin }}</div>{% if not c.case_ok %}<div class="small" style="color:var(--warn)">Not whole cases of {{ c.case_pack }}: {{ c.case_qty|num }} would be whole cases</div>{% endif %}</div></td>
-      <td class="num">{{ l.qty_ordered|num }}</td><td class="num {% if not c.stock_ok %}warn-t{% endif %}">{{ c.stock|num }}</td>
+      <td class="num">{{ l.qty_ordered|num }}</td><td class="num {% if not c.stock_ok %}warn-t{% endif %}">{{ c.stock|num }}{% if c.reserved %}<div class="small muted" title="Free stock {{ c.free }}, of which {{ c.reserved }} is promised to POs due earlier">{{ c.reserved|num }} held for earlier POs</div>{% endif %}</td>
       <td class="num {% if not c.price_ok %}bad-t{% endif %}">{{ l.cost_h|n2 }}</td>
       <td class="num">{{ c.agreed_h|n2 }}{% if not c.price_ok %}<div class="small bad-t">{{ c.diff_h|n2 }}</div>{% endif %}</td>
       <td><select class="sel" id="d-{{ l.pk }}" name="d-{{ l.pk }}" aria-label="Decision" {% if not caps.confirm %}disabled{% endif %}>{% for v, lab in l.DECISIONS %}<option value="{{ v }}" {% if l.decision == v %}selected{% endif %}>{{ lab }}</option>{% endfor %}</select></td>
@@ -60,14 +60,17 @@
     <div><button class="btn sm" hx-post="/pos/{{ po.po_no }}/asn/" hx-include="#asn-form" hx-vals='{"save_only": "1"}' hx-swap="none" {% perm 'ship' %}>{% icon 'refresh' %}<span>Re-check quantities</span></button></div>
   {% else %}
     <div class="kv2"><div><span>ASN</span><b class="mono">{{ sh.asn_no }}</b></div><div><span>SAP delivery</span><b class="mono">{{ sh.sap_delivery_no }}</b></div><div><span>Cartons</span><b>{{ sh.cartons }}</b></div><div><span>Ship date</span><b>{{ sh.ship_date|fdt }}</b></div>
-    <div><span>Carrier Central slot</span><b>{% if sh.slot_id %}<span class="mono">{{ sh.slot_id }}</span> · {{ sh.slot_start|fdt }}{% else %}<span class="warn-t">Not booked</span>{% endif %}</b></div><div><span>Delivered</span><b>{{ po.delivered_at|fdt }}</b></div></div>
+    <div><span>{% if sh.freight == 'collect' %}Amazon pickup (collect){% else %}Carrier Central slot{% endif %}</span><b>{% if sh.slot_id %}<span class="mono">{{ sh.slot_id }}</span> · {{ sh.slot_start|fdt }}{% else %}<span class="warn-t">Not booked</span>{% endif %}</b></div><div><span>Delivered</span><b>{{ po.delivered_at|fdt }}</b></div></div>
+    {% if sh.slot_outcome %}<div class="banner bad">{% icon 'alert' %}<span class="t"><b>Last appointment {{ sh.slot_outcome }}:</b> {{ sh.slot_note }}. Book a new slot.</span></div>{% endif %}
     {% if needs_pod %}<div class="banner warn">{% icon 'alert' %}<span class="t"><b>No proof of delivery attached.</b> Attach the signed POD / GRN so a shortage Amazon deducts later can be disputed.</span><button class="btn sm" hx-get="{{ base }}?tab=docs" hx-target="#drawer">Attach POD</button></div>{% endif %}
     {% if slot_risk %}<div class="banner bad">{% icon 'alert' %}<span class="t"><b>No delivery slot and the truck ships {{ sh.ship_date|due }}.</b> Book a Carrier Central slot now.</span></div>{% endif %}
     <div class="tw"><table class="dt compact"><thead><tr><th>Model</th><th class="num">ASN qty</th></tr></thead><tbody>{% for l in sh.lines.all %}<tr><td>{{ l.sku.model_no }} <span class="small muted mono">{{ l.sku.sku_code }}</span></td><td class="num">{{ l.qty|num }}</td></tr>{% endfor %}</tbody></table></div>
+    {% with cl=sh.carton_list.all %}{% if cl %}<details class="cartons"><summary class="small"><b>{{ cl|length }} carton label{{ cl|length|pluralize }}</b> <span class="muted">· SSCC per carton, in the Documents tab as Carton_labels_{{ sh.asn_no }}.csv</span></summary>
+    <div class="tw"><table class="dt compact"><thead><tr><th>#</th><th>SSCC</th><th>Model</th><th class="num">Units</th></tr></thead><tbody>{% for c in cl %}<tr><td>{{ c.seq }}</td><td class="mono">{{ c.sscc }}</td><td>{{ c.sku.model_no }}</td><td class="num">{{ c.qty|num }}</td></tr>{% endfor %}</tbody></table></div></details>{% endif %}{% endwith %}
   {% endif %}
 
 {% elif tab == 'invoice' %}
-  {% if po.stage_index < 6 and po.stage != 'rejected' %}
+  {% if po.stage_index < 6 and po.stage != 'rejected' and po.stage != 'cancelled' %}
     <div class="empty"><div class="ei">{% icon 'receipt' %}</div><b>Not delivered yet</b><span>The invoice is built from the SAP billing document after delivery.</span></div>
   {% elif po.stage == 'delivered' %}
     {% if inv_blocked %}<div class="banner bad">{% icon 'x' %}<span class="t"><b>Invoice blocked (R6).</b> SAP billed a different quantity than the ASN. Amazon would short-pay this invoice.</span></div>
@@ -78,7 +81,20 @@
     </tbody></table></div>
     <div class="totals"><div><span>Net</span><b>{{ inv_net|sar }}</b></div><div><span>VAT 15%</span><b>{{ inv_vat|sar }}</b></div><div><span>Total</span><b>{{ inv_total|sar }}</b></div></div>
   {% elif inv %}
-    <div class="kv2"><div><span>Invoice</span><b class="mono">{{ inv.invoice_no }}</b></div><div><span>Date</span><b>{{ inv.invoice_date|fd }}</b></div><div><span>SAP billing</span><b class="mono">{{ inv.sap_billing_no }}</b></div><div><span>Total</span><b>{{ inv.total_h|sar }}</b></div><div><span>Paid</span><b>{{ paid|sar }}</b></div><div><span>Status</span>{% po_chip po %}</div></div>
+    <div class="kv2"><div><span>Invoice</span><b class="mono">{{ inv.invoice_no }}</b></div><div><span>Date</span><b>{{ inv.invoice_date|fd }}</b></div><div><span>SAP billing</span><b class="mono">{{ inv.sap_billing_no }}</b></div><div><span>Total</span><b>{{ inv.total_h|sar }}</b></div>{% if inv.memo_h %}<div><span>Credit memos</span><b>−{{ inv.memo_h|sar }}</b></div>{% endif %}<div><span>Paid</span><b>{{ paid|sar }}</b></div><div><span>Status</span>{% po_chip po %}</div>
+    <div><span>Amazon</span><b>{% if inv.amazon_status == 'rejected' or inv.amazon_status == 'on_hold' %}<span class="bad-t">{{ inv.get_amazon_status_display }}</span>{% else %}{{ inv.get_amazon_status_display }}{% endif %}{% if inv.revision %} <span class="small muted">· revision {{ inv.revision }}</span>{% endif %}</b></div></div>
+    {% if inv.amazon_status == 'rejected' or inv.amazon_status == 'on_hold' %}<div class="banner bad">{% icon 'alert' %}<span class="t"><b>{{ inv.get_amazon_status_display }}:</b> {{ inv.amazon_note }}. Correct it in SAP (or issue a credit memo), then send it again.</span>
+      <button class="btn sm" hx-post="/pos/{{ po.po_no }}/invoice/resubmit/" hx-swap="none" {% perm 'invoice' %}>Send corrected invoice</button>{% if inv.amazon_status == 'on_hold' %}<button class="btn sm" hx-post="/pos/{{ po.po_no }}/invoice/status/" hx-vals='{"status": "accepted"}' hx-swap="none" {% perm 'invoice' %}>Hold released</button>{% endif %}</div>
+    {% elif po.stage == 'invoiced' %}<details class="inline-form"><summary class="small">Amazon rejected or held this invoice?</summary>
+      <form class="row" style="gap:6px;margin-top:8px" hx-post="/pos/{{ po.po_no }}/invoice/status/" hx-swap="none"><select class="sel" name="status" aria-label="Amazon's answer"><option value="on_hold">On hold</option><option value="rejected">Rejected</option></select>
+      <input class="inp" name="note" placeholder="Amazon's reason" aria-label="Amazon's reason" style="flex:1 1 200px" required><button class="btn sm" type="submit" {% perm 'invoice' %}>Record</button></form></details>{% endif %}
+    {% with memos=inv.credit_memos.all %}{% if memos %}<div class="tw"><table class="dt compact"><thead><tr><th>Credit memo</th><th>Date</th><th>Reason</th><th class="num">SAR</th></tr></thead><tbody>{% for m in memos %}<tr><td class="mono">{{ m.memo_no }}</td><td>{{ m.created_at|fd }}</td><td>{{ m.reason }}</td><td class="num">{{ m.amount_h|n }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}{% endwith %}
+    {% if po.stage == 'invoiced' %}<details class="inline-form"><summary class="small">Issue a credit memo against this invoice</summary>
+      <form class="row" style="gap:6px;margin-top:8px" hx-post="/pos/{{ po.po_no }}/credit-memo/" hx-swap="none">
+      <input class="inp" name="memo_no" placeholder="SAP credit note # (optional)" aria-label="Credit memo number" style="width:190px">
+      <input class="inp" name="amount" type="number" step="0.01" min="0.01" placeholder="SAR incl. VAT" aria-label="Amount SAR" style="width:130px" required>
+      <input class="inp" name="reason" placeholder="Reason, e.g. agreed price claim" aria-label="Reason" style="flex:1 1 180px" required>
+      <button class="btn sm" type="submit" {% perm 'invoice' %}>Record memo</button></form><p class="small muted">The tax credit note is issued in SAP. Amazon then owes the invoice less the memo; a matching short payment closes.</p></details>{% endif %}
     <div class="tw"><table class="dt compact"><thead><tr><th>Model</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Net SAR</th></tr></thead><tbody>{% for l in inv.lines.all %}<tr><td>{{ l.sku.model_no }}</td><td class="num">{{ l.qty|num }}</td><td class="num">{{ l.price_h|n2 }}</td><td class="num">{{ l.net_h|n }}</td></tr>{% endfor %}</tbody>
     <tfoot><tr><td>VAT 15%</td><td></td><td></td><td class="num">{{ inv.vat_h|n }}</td></tr><tr><td>Total</td><td></td><td></td><td class="num">{{ inv.total_h|n }}</td></tr></tfoot></table></div>
     <h3 class="sect-h">Payments</h3>
@@ -95,7 +111,7 @@
     {% if p.dn_sugs %}{% with sugs=p.dn_sugs kind="pay_dn" source=p.payment_no perm_name="dispute" %}{% include "partials/suggestions.html" %}{% endwith %}{% endif %}
     {% endfor %}
     {% else %}<p class="muted small">No payment yet. Amazon usually pays 30–60 days after the invoice.</p>{% endif %}
-  {% else %}<p class="muted">This PO was rejected in full.</p>{% endif %}
+  {% else %}<p class="muted">{% if po.stage == 'cancelled' %}Amazon cancelled this PO.{% else %}This PO was rejected in full.{% endif %}</p>{% endif %}
 
 {% elif tab == 'checks' %}{% include "partials/checks.html" %}
 {% elif tab == 'timeline' %}{% include "partials/timeline.html" %}
@@ -112,9 +128,10 @@
 {% elif po.stage == 'slot' %}Slot {{ sh.slot_id }} at {{ sh.slot_start|fdt }}.
 {% elif po.stage == 'delivered' %}{% if inv_blocked %}Invoice blocked until billing matches the ASN.{% else %}Submits the invoice to Amazon.{% endif %}
 {% elif po.stage == 'invoiced' %}{% if short_pay %}Short-paid by {{ short_pay.deduction_h|sar }}{% if short_pay.reason %} ({{ short_pay.reason }}){% endif %}. Dispute it, accept it or link it to a debit note.{% elif open_dispute %}Deduction disputed in {{ open_dispute.case_no }} — waiting for Amazon.{% else %}Waiting for Amazon payment. Upload the remittance report to match it.{% endif %}
-{% elif po.stage == 'paid' %}Paid {{ po.paid_at|fd }}. This order is complete.{% else %}This PO was rejected in full.{% endif %}{% endblock %}
+{% elif po.stage == 'paid' %}Paid {{ po.paid_at|fd }}. This order is complete.{% elif po.stage == 'cancelled' %}Cancelled by Amazon. Nothing more to do.{% else %}This PO was rejected in full.{% endif %}{% endblock %}
 
-{% block foot %}
+{% block foot %}{% if po.stage in changeable %}<button class="btn ghost" hx-get="/pos/{{ po.po_no }}/change/" hx-target="#modal" {% perm 'confirm' %} title="Amazon changed quantities, the ship window, or cancelled the PO">Amazon change</button>{% endif %}
+
 {% if po.stage == 'new' %}
   {% if tab != 'lines' %}<input type="hidden" id="po-confirm-v" name="version" value="{{ po.version }}">{% endif %}
   <button class="btn" hx-post="/pos/{{ po.po_no }}/accept-green/" hx-swap="none" {% perm 'confirm' %}>Accept all green</button>
@@ -135,6 +152,8 @@
 {% elif po.stage == 'asn' %}
   <button class="btn pri" hx-get="/pos/{{ po.po_no }}/slot/" hx-target="#modal" {% perm 'ship' %}>Book delivery slot</button>
 {% elif po.stage == 'slot' %}
+  <button class="btn" hx-get="/pos/{{ po.po_no }}/slot-failed/" hx-target="#modal" {% perm 'ship' %}>Missed / refused</button>
+  <button class="btn" hx-get="/pos/{{ po.po_no }}/slot/" hx-target="#modal" {% perm 'ship' %}>Reschedule</button>
   <button class="btn pri" hx-post="/pos/{{ po.po_no }}/deliver/" hx-vals='{"version": "{{ po.version }}"}' hx-swap="none" {% perm 'ship' %}>Mark delivered</button>
 {% elif po.stage == 'delivered' %}
   {% if tab == 'invoice' %}<button class="btn pri" hx-post="/pos/{{ po.po_no }}/invoice/" hx-vals='{"version": "{{ po.version }}"}' hx-swap="none" {% perm 'invoice' %} {% if inv_blocked %}disabled{% endif %}>{% icon 'send' %}<span>Submit invoice</span></button>

@@ -6,9 +6,10 @@ from core.models import Base
 STAGES = ["new", "confirmed", "booked", "released", "asn", "slot", "delivered", "invoiced", "paid"]
 STAGE_LABELS = {"new": "To confirm", "confirmed": "Confirmed", "booked": "Booked in SAP", "released": "Released",
                 "asn": "ASN sent", "slot": "Slot booked", "delivered": "Delivered", "invoiced": "Invoiced",
-                "paid": "Paid", "rejected": "Rejected"}
+                "paid": "Paid", "rejected": "Rejected", "cancelled": "Cancelled by Amazon"}
 STAGE_TONES = {"new": "info", "confirmed": "info", "booked": "info", "released": "info", "asn": "info",
-               "slot": "info", "delivered": "info", "invoiced": "pri", "paid": "ok", "rejected": "bad"}
+               "slot": "info", "delivered": "info", "invoiced": "pri", "paid": "ok", "rejected": "bad", "cancelled": "bad"}
+CLOSED = ["paid", "rejected", "cancelled"]
 
 
 class PurchaseOrder(Base):
@@ -19,13 +20,14 @@ class PurchaseOrder(Base):
     window_start = models.DateTimeField(null=True, blank=True)
     window_end = models.DateTimeField(null=True, blank=True)
     stage = models.CharField(max_length=12, default="new", db_index=True,
-                             choices=[(s, STAGE_LABELS[s]) for s in STAGES + ["rejected"]])
+                             choices=[(s, STAGE_LABELS[s]) for s in STAGES + ["rejected", "cancelled"]])
     confirmed_at = models.DateTimeField(null=True, blank=True)
     booked_at = models.DateTimeField(null=True, blank=True)
     credit_hold = models.CharField(max_length=200, blank=True, help_text="Why credit control is holding the order")
     released_at = models.DateTimeField(null=True, blank=True)
     delivered_at = models.DateTimeField(null=True, blank=True)
     paid_at = models.DateTimeField(null=True, blank=True)
+    vendor_code = models.CharField(max_length=12, blank=True, db_index=True, help_text="Amazon vendor code the PO was sent to")
     sap_order_no = models.CharField(max_length=20, blank=True)
     sf_order_id = models.CharField(max_length=20, blank=True)
 

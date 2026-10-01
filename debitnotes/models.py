@@ -23,7 +23,8 @@ class DebitNote(Base):
 
 class DnLine(Base):
     dn = models.ForeignKey(DebitNote, on_delete=models.CASCADE, related_name="lines")
-    sku = models.ForeignKey(Sku, on_delete=models.PROTECT)
+    sku = models.ForeignKey(Sku, on_delete=models.PROTECT, null=True, blank=True, help_text="Empty for a fixed-fee line")
+    label = models.CharField(max_length=80, blank=True, help_text="Fixed-fee lines: what the fee is")
     units = models.IntegerField()
     rate_h = models.BigIntegerField()
 

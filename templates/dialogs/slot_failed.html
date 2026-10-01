@@ -1,0 +1,12 @@
+{% extends "dialogs/_modal.html" %}
+{% block size %}sm{% endblock %}{% block label %}Missed or refused{% endblock %}
+{% block mtitle %}Delivery missed or refused{% endblock %}
+{% block msub %}<p>PO {{ po.po_no }} · {% if sh.freight == 'collect' %}pickup{% else %}slot{% endif %} {{ sh.slot_id }} · {{ sh.slot_start|fdt }}</p>{% endblock %}
+{% block form_open %}<form hx-post="/pos/{{ po.po_no }}/slot-failed/" hx-swap="none"><input type="hidden" name="version" value="{{ po.version }}">{% endblock %}
+{% block mbody %}
+<div class="field"><label for="sf-o">What happened</label><select class="sel" id="sf-o" name="outcome"><option value="missed">Missed: the truck did not make the appointment</option><option value="refused">Refused: Amazon turned the delivery away</option></select></div>
+<div class="field"><label for="sf-r">Reason</label><input class="inp" id="sf-r" name="reason" required placeholder="e.g. labels did not match the ASN"></div>
+<p class="small muted">The slot is released and the shipment goes back to “book a slot”. Missed and refused appointments can lead to Amazon chargebacks; keep the reason for the dispute.</p>
+{% endblock %}
+{% block mfoot %}<span class="hint"></span><button type="button" class="btn" data-close="modal">Cancel</button><button class="btn danger" type="submit" {% perm 'ship' %}>Release the slot</button>{% endblock %}
+{% block form_close %}</form>{% endblock %}

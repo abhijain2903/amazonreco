@@ -50,7 +50,7 @@ def action_items(user, mine=True):
     now = timezone.now()
     cfg = get_cfg()
     it = []
-    pos = PurchaseOrder.objects.exclude(stage__in=["paid", "rejected", "invoiced"]).select_related("fc").prefetch_related(
+    pos = PurchaseOrder.objects.exclude(stage__in=["paid", "rejected", "cancelled", "invoiced"]).select_related("fc").prefetch_related(
         Prefetch("lines", queryset=PoLine.objects.select_related("sku")))
     for po in pos:
         lines = list(po.lines.all())
@@ -85,8 +85,10 @@ def action_items(user, mine=True):
                            open=("po", po.po_no, "shipment"), cta=dict(label="Create ASN" if d else "Open", kind="open", url=f"/records/po/{po.po_no}/?tab=shipment")))
         elif po.stage == "asn":
             sh = shipment_of(po)
-            it.append(dict(key="s" + po.po_no, sev="bad" if slot_at_risk(po, cfg) else "info", icon="truck",
-                           title=f"Book delivery slot for {po.po_no}", sub=f"ASN {sh.asn_no} · ships {timezone.localtime(sh.ship_date):%d %b, %H:%M}",
+            failed = sh.slot_outcome
+            it.append(dict(key="s" + po.po_no, sev="bad" if failed or slot_at_risk(po, cfg) else "info", icon="truck",
+                           title=(f"Re-book delivery for {po.po_no}: last slot {failed}" if failed else f"Book delivery slot for {po.po_no}"),
+                           sub=(sh.slot_note if failed else f"ASN {sh.asn_no} · ships {timezone.localtime(sh.ship_date):%d %b, %H:%M}"),
                            amt=v, due=sh.ship_date - timedelta(hours=float(cfg.p('R5', 'hrs'))), roles=["Logistics"], open=("po", po.po_no, "shipment"),
                            cta=dict(label="Book slot", kind="dialog", url=f"/pos/{po.po_no}/slot/", perm="ship")))
         elif po.stage == "delivered":
@@ -96,6 +98,13 @@ def action_items(user, mine=True):
                            sub="SAP billing does not match ASN quantity" if blk else f"Delivered {_span(now - po.delivered_at)} ago",
                            amt=round(v * 1.15), due=add_working_days(po.delivered_at, 2), roles=["PIC"], mismatch=blk,
                            open=("po", po.po_no, "invoice"), cta=dict(label="Fix" if blk else "Review", kind="open", url=f"/records/po/{po.po_no}/?tab=invoice")))
+    from billing.models import Invoice
+    for inv in Invoice.objects.filter(amazon_status__in=["rejected", "on_hold"]).select_related("po"):
+        rej = inv.amazon_status == "rejected"
+        it.append(dict(key="r" + inv.invoice_no, sev="bad", icon="receipt",
+                       title=f"Invoice {inv.invoice_no} {'rejected' if rej else 'on hold'} by Amazon", sub=f"{inv.amazon_note} · PO {inv.po.po_no}",
+                       amt=inv.total_h, due=add_working_days(inv.updated_at, 2), roles=["PIC", "Finance"], mismatch=True,
+                       open=("po", inv.po.po_no, "invoice"), cta=dict(label="Fix", kind="open", url=f"/records/po/{inv.po.po_no}/?tab=invoice")))
     best = _best_suggestions()
     for p in Payment.objects.filter(status__in=["short", "unmatched"]).select_related("po"):
         if p.status == "short":
@@ -166,8 +175,15 @@ def action_items(user, mine=True):
         i["overdue"] = bool(i["due"] and i["due"] < now)
         i["due_soon"] = bool(i["due"] and not i["overdue"] and i["due"] - now < timedelta(hours=12))
         i["due_text"] = (f"{_span(now - i['due'])} overdue" if i["overdue"] else f"due in {_span(i['due'] - now)}") if i["due"] else ""
+    from core.models import Assignment
+    owners = {(a.entity, a.entity_id): a.user for a in Assignment.objects.select_related("user")}
+    for i in it:
+        o = owners.get((i["open"][0], i["open"][1])) if i.get("open") else None
+        i["owner"] = o
+        if o and user:
+            i["mine"] = o.pk == user.pk
     it.sort(key=lambda i: (RANK[i["sev"]], i["due"] or now + timedelta(days=3650)))
     if mine and user and not (set(user.roles or []) & {"Admin", "Manager"}):
         mine_roles = set(user.roles or [])
-        it = [i for i in it if mine_roles & set(i["roles"])]
+        it = [i for i in it if ((i["owner"].pk == user.pk) if i["owner"] else bool(mine_roles & set(i["roles"])))]
     return it
