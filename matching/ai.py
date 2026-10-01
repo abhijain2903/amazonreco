@@ -219,6 +219,8 @@ def classify_deduction(record, evidence):
     out, model = _ask(
         "Task: Amazon deducted money from this payment. Classify the deduction, recommend the next step "
         "(dispute when ME's evidence supports the full invoice; link_dn when it is a promotion debit note listed in "
-        "the evidence; accept only when the evidence shows Amazon is right; review when unclear) and draft the note.",
+        "the evidence; accept only when the evidence shows Amazon is right; review when unclear) and draft the note. "
+        "For a chargeback, check it against the ASN timing, carton labels and appointment history in the evidence; for "
+        "returns, compare with the returns received; cite the facts you rely on.",
         {"payment": record, "evidence": evidence}, DEDUCTION_SCHEMA)
     return dict(out, model=model) if out else None

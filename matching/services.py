@@ -91,18 +91,20 @@ def refresh_deduction(p, use_ai=False):
     r = matchers.deduction(p, dn)
     MatchSuggestion.objects.filter(kind="deduction", source=p.payment_no, status="pending").update(status="superseded")
     s = MatchSuggestion.objects.create(kind="deduction", source=p.payment_no, targets=[r["type"]], score=r["confidence"],
-                                       label=f"{r['type'].title()} · {ACTION_LABEL[r['action']]}", reasons=r["reasons"],
+                                       label=f"{TYPE_LABEL.get(r['type'], r['type'].title())} · {ACTION_LABEL[r['action']]}", reasons=r["reasons"],
                                        extra=dict(action=r["action"], note=r["note"], dn=dn[0]["targets"][0] if dn and dn[0]["score"] >= 70 else ""))
     if use_ai and ai.available():
         out = ai.classify_deduction(_record("pay_dn", p), _evidence(p, dn))
         if out:
             s.method, s.ai_model, s.ai_rationale, s.score = "ai", out["model"], out["rationale"], out["confidence"]
-            s.targets, s.label = [out["type"]], f"{out['type'].title()} · {ACTION_LABEL[out['action']]}"
+            s.targets, s.label = [out["type"]], f"{TYPE_LABEL.get(out['type'], out['type'].title())} · {ACTION_LABEL[out['action']]}"
             s.extra = dict(s.extra, action=out["action"], note=out["dispute_note"] or s.extra["note"])
             s.save()
     return s
 
 
+TYPE_LABEL = {"shortage": "Shortage", "price": "Price", "promo": "Promo", "damage": "Damage", "chargeback": "Chargeback",
+              "returns": "Returns (RTV)", "coop": "Co-op / advertising", "other": "Other"}
 ACTION_LABEL = {"dispute": "dispute it", "accept": "accept it", "link_dn": "link to the debit note", "review": "review by hand"}
 
 
@@ -117,7 +119,33 @@ def _evidence(p, dn_cands):
                   slot_booked=bool(sh and sh.slot_id), invoice_matches_asn_and_po_price=all(c["qty_ok"] and c["price_ok"] for c in checks),
                   lines=[dict(model=c["sku"].model_no, asn_qty=c["asn_qty"], invoiced_qty=c["bill_qty"], price_sar=c["po_price_h"] / 100) for c in checks])
     ev["validated_debit_notes_that_could_explain_it"] = [dict(label=c["label"], score=c["score"], reasons=c["reasons"]) for c in dn_cands[:3]]
+    ev.update(_operational_evidence(p))
     return ev
+
+
+def _operational_evidence(p):
+    """What ME can show for chargebacks, shortages and returns: ASN timing, carton labels, the appointment history,
+    proof of delivery, credit memos, and returns received but not yet matched to a deduction."""
+    from core.models import Attachment, AuditEvent
+    from returns.models import ReturnAuth
+    out = {}
+    inv, po = p.invoice, p.po
+    sh = (inv.shipment if inv and inv.shipment_id else None) or (getattr(po, "shipment", None) if po else None)
+    if sh:
+        out.update(asn_submitted=timezone.localtime(sh.submitted_at).isoformat(timespec="minutes"),
+                   truck_left=timezone.localtime(sh.ship_date).isoformat(timespec="minutes"),
+                   asn_sent_before_truck_left=sh.submitted_at <= sh.ship_date,
+                   cartons_with_sscc_labels=sh.carton_list.count(), freight=sh.freight,
+                   appointment=sh.slot_id or None, appointment_reschedules=sh.reschedules)
+    if po:
+        out["appointment_problems"] = [e.text for e in AuditEvent.objects.filter(entity="po", entity_id=po.po_no, action__in=["missed", "refused"])]
+        out["proof_of_delivery_attached"] = Attachment.objects.filter(entity="po", entity_id=po.po_no, kind="pod").exists()
+    if inv:
+        out["credit_memos_sar"] = [m.amount_h / 100 for m in inv.credit_memos.all()]
+    out["returns_received_not_yet_matched"] = [
+        dict(rtv=r.rtv_no, requested_sar=r.amount_h / 100, received_sar=r.received_h / 100)
+        for r in ReturnAuth.objects.filter(status="received").prefetch_related("lines")[:5]]
+    return out
 
 
 def _apply(user, s, obj=None):
