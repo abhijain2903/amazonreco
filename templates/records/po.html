@@ -142,8 +142,8 @@
 
 {% if po.stage == 'new' %}
   {% if tab != 'lines' %}<input type="hidden" id="po-confirm-v" name="version" value="{{ po.version }}">{% endif %}
-  <button class="btn" hx-post="/pos/{{ po.po_no }}/accept-green/" hx-swap="none" {% perm 'confirm' %}>Accept all green</button>
-  <button class="btn pri" hx-post="/pos/{{ po.po_no }}/confirm/" hx-include="{% if tab == 'lines' %}#po-lines{% else %}#po-confirm-v{% endif %}" hx-swap="none" {% perm 'confirm' %}>{% icon 'send' %}<span>Confirm PO</span></button>
+  <button class="btn" hx-post="/pos/{{ po.po_no }}/accept-green/" {% if tab == 'lines' %}hx-sync="#po-lines:queue all"{% endif %} hx-swap="none" {% perm 'confirm' %}>Accept all green</button>
+  <button class="btn pri" hx-post="/pos/{{ po.po_no }}/confirm/" hx-include="{% if tab == 'lines' %}#po-lines{% else %}#po-confirm-v{% endif %}" {% if tab == 'lines' %}hx-sync="#po-lines:queue all"{% endif %} hx-swap="none" {% perm 'confirm' %}>{% icon 'send' %}<span>Confirm PO</span></button>
 {% elif po.stage == 'confirmed' %}
   <form hx-post="/pos/{{ po.po_no }}/book/" hx-swap="none" class="row" style="flex-wrap:nowrap">
     <input type="hidden" name="version" value="{{ po.version }}">
