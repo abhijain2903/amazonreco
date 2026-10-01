@@ -27,6 +27,11 @@ def promo(st):
     return next(p for p in Promotion.objects.all() if stage_of(p) == st).mecl_ref
 
 
+def rtv(status):
+    from returns.models import ReturnAuth
+    return ReturnAuth.objects.filter(status=status).first().rtv_no
+
+
 def dn(status):
     return next(d for d in DebitNote.objects.filter(validated=False) if evaluate(d)["status"] == status).dn_no
 
@@ -69,6 +74,13 @@ ACTIONS = {
     "po.change": ("confirm", lambda: f"/pos/{po('confirmed')}/change/", {"cancel": "1"}),
     "po.slot_failed": ("ship", lambda: f"/pos/{po('slot')}/slot-failed/", {"outcome": "missed", "reason": "x"}),
     "po.invoice_status": ("invoice", lambda: f"/pos/{po('invoiced')}/invoice/status/", {"status": "on_hold", "note": "x"}),
+    "po.backorder_ship": ("ship", lambda: f"/pos/{po('backorder')}/backorder/ship/", {}),
+    "po.backorder_close": ("confirm", lambda: f"/pos/{po('backorder')}/backorder/close/", {"reason": "x"}),
+    "rtv.authorise": ("dispute", lambda: f"/returns/{rtv('requested')}/authorise/", {}),
+    "rtv.refuse": ("dispute", lambda: f"/returns/{rtv('requested')}/refuse/", {"reason": "x"}),
+    "rtv.receive": ("ship", lambda: f"/returns/{rtv('authorised')}/receive/", {}),
+    "rtv.link": ("dispute", lambda: f"/returns/{rtv('received')}/link/", {"payment_no": "x"}),
+    "rtv.new": ("upload", lambda: "/returns/new/", {"rtv_no": "RTV-X", "sku-0": "x", "qty-0": "1"}),
     "po.credit_memo": ("invoice", lambda: f"/pos/{po('invoiced')}/credit-memo/", {"amount": "1", "reason": "x"}),
     "po.sync_delivery": ("ship", lambda: f"/pos/{po('released', lambda p: not delivery_of(p))}/sync-delivery/", {}),
     "po.asn": ("ship", lambda: f"/pos/{po('released', delivery_of)}/asn/", {}),

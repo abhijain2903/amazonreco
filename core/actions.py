@@ -91,6 +91,13 @@ def action_items(user, mine=True):
                            sub=(sh.slot_note if failed else f"ASN {sh.asn_no} · ships {timezone.localtime(sh.ship_date):%d %b, %H:%M}"),
                            amt=v, due=sh.ship_date - timedelta(hours=float(cfg.p('R5', 'hrs'))), roles=["Logistics"], open=("po", po.po_no, "shipment"),
                            cta=dict(label="Book slot", kind="dialog", url=f"/pos/{po.po_no}/slot/", perm="ship")))
+        elif po.stage == "backorder":
+            from fulfilment.services import open_qty
+            eta = min((l.backorder_eta for l in po.lines.all() if l.qty_backorder and l.backorder_eta), default=None)
+            due = timezone.make_aware(timezone.datetime.combine(eta, timezone.datetime.min.time())) if eta else None
+            it.append(dict(key="b" + po.po_no, sev="warn" if due and due < now else "info", icon="box", title=f"Backorder on {po.po_no}: {open_qty(po):,} units to ship",
+                           sub=f"Expected {eta:%d %b}" if eta else "No date given", amt=None, due=due, roles=["Logistics", "PIC"],
+                           open=("po", po.po_no, "shipment"), cta=dict(label="Ship", kind="post", url=f"/pos/{po.po_no}/backorder/ship/", perm="ship")))
         elif po.stage == "delivered":
             blk = invoice_blocked(po, cfg)
             it.append(dict(key="i" + po.po_no, sev="bad" if blk else "info", icon="receipt",
@@ -161,6 +168,14 @@ def action_items(user, mine=True):
                        sub=f"{d.get_type_display()} · {'with Amazon' + (' (case ' + d.amazon_case_id + ')' if d.amazon_case_id else '') if d.status == 'submitted' else 'not submitted yet'}",
                        amt=d.amount_h, amt_label="disputed", due=d.due, roles=["Finance", "PIC"], open=("dispute", d.case_no, ""),
                        cta=dict(label="Open", kind="open", url=f"/records/dispute/{d.case_no}/")))
+    from returns.models import ReturnAuth
+    from returns.services import due_for
+    for r in ReturnAuth.objects.filter(status__in=["requested", "authorised", "received"]).prefetch_related("lines"):
+        t = {"requested": (f"Authorise or refuse return {r.rtv_no}", "warn", ["PIC", "Finance"], f"{r.get_reason_display()} · {sum(l.qty for l in r.lines.all()):,} units"),
+             "authorised": (f"Receive return {r.rtv_no}", "info", ["Logistics"], f"Authorised {timezone.localtime(r.authorised_at):%d %b}" if r.authorised_at else "Authorised"),
+             "received": (f"Match the deduction for return {r.rtv_no}", "info", ["Finance"], f"Received SAR {round(r.received_h / 100):,} · waiting for Amazon's deduction")}[r.status]
+        it.append(dict(key="t" + r.rtv_no, sev=t[1], icon="box", title=t[0], sub=t[3], amt=r.amount_h, due=due_for(r), roles=t[2],
+                       open=("rtv", r.rtv_no, ""), cta=dict(label="Open", kind="open", url=f"/records/rtv/{r.rtv_no}/")))
     for c in Claim.objects.filter(status="shortfall").select_related("promotion"):
         it.append(dict(key="f" + c.claim_no, sev="bad", icon="claim", title=f"Credit note short on {c.claim_no}",
                        sub=f"{c.promotion.mecl_ref} · claimed SAR {round(c.amount_h / 100):,}, received SAR {round(c.cn_h / 100):,}",

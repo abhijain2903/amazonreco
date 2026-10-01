@@ -1,0 +1,40 @@
+{% extends "records/_drawer.html" %}
+{% block label %}Return {{ r.rtv_no }}{% endblock %}
+{% block type %}Return to vendor (RTV){% endblock %}{% block title %}{{ r.rtv_no }}{% endblock %}
+{% block chip %}{% if r.status == 'requested' %}{% chip "To authorise" "warn" %}{% elif r.status == 'authorised' %}{% chip "On its way" "info" %}{% elif r.status == 'received' %}{% chip "Received" "info" %}{% elif r.status == 'credited' %}{% chip "Credited" "ok" %}{% elif r.status == 'disputed' %}{% chip "Disputed" "bad" %}{% else %}{% chip "Refused" %}{% endif %}{% endblock %}
+{% block head %}
+<div class="sum">{% if r.vendor_code %}<span>Vendor code <b class="mono">{{ r.vendor_code }}</b></span>{% endif %}<span>From <b>{{ r.fc.code|default:"Amazon" }}</b></span><span>Reason <b>{{ r.get_reason_display }}</b></span><span>Requested <b>{{ r.requested_at|fd }}</b></span><span>Value <b>{{ r.amount_h|sar }}</b></span></div>
+{% include "partials/dtabs.html" %}
+{% endblock %}
+{% block body %}
+{% if tab == 'lines' %}
+  {% if r.note %}<div class="banner info">{% icon 'info' %}<span class="t">{{ r.note }}</span></div>{% endif %}
+  {% if r.status == 'authorised' %}<form id="rtv-recv" hx-post="/returns/{{ r.rtv_no }}/receive/" hx-swap="none"><input type="hidden" name="version" value="{{ r.version }}">{% endif %}
+  <div class="tw"><table class="dt compact"><thead><tr><th>Model</th><th class="num">Units</th><th class="num">Cost SAR</th><th class="num">Value SAR</th><th class="num">Received</th><th>Condition</th></tr></thead><tbody>
+  {% for l in lines %}<tr><td>{{ l.sku.model_no }} <span class="small muted mono">{{ l.sku.sku_code }}</span></td><td class="num">{{ l.qty|num }}</td><td class="num">{{ l.unit_cost_h|n2 }}</td><td class="num">{{ l.qty|mul:l.unit_cost_h|n }}</td>
+  {% if r.status == 'authorised' %}<td class="num"><input class="inp sm qty" type="number" min="0" name="r-{{ l.pk }}" value="{{ l.qty }}" aria-label="Received units for {{ l.sku.model_no }}" {% if not caps.ship %}readonly{% endif %}></td>
+  <td><select class="sel sm" name="c-{{ l.pk }}" aria-label="Condition">{% for k, v in conditions %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></td>
+  {% else %}<td class="num">{% if l.qty_received is None %}—{% else %}<span class="{% if l.qty_received < l.qty %}bad-t{% endif %}">{{ l.qty_received|num }}</span>{% endif %}</td><td>{{ l.get_condition_display|default:"—" }}</td>{% endif %}</tr>{% endfor %}</tbody></table></div>
+  {% if r.status == 'authorised' %}</form>{% endif %}
+  {% if r.received_at %}<div class="totals"><div><span>Requested value</span><b>{{ r.amount_h|sar }}</b></div><div><span>Received value</span><b>{{ r.received_h|sar }}</b></div></div>{% endif %}
+  {% if r.payment_no %}<div class="kv2"><div><span>Deduction</span><b class="mono">{{ r.payment_no }}</b></div>{% if r.dispute_no %}<div><span>Dispute</span><b class="mono"><button type="button" class="lk-plain" hx-get="/records/dispute/{{ r.dispute_no }}/" hx-target="#drawer">{{ r.dispute_no }}</button></b></div>{% endif %}</div>{% endif %}
+  {% if r.status == 'received' %}<h3 class="sect-h">Match Amazon's deduction</h3>
+    {% if cands %}<div class="tw"><table class="dt compact"><thead><tr><th>Payment</th><th>Date</th><th>Amazon's reason</th><th class="num">Deducted SAR</th><th></th></tr></thead><tbody>
+    {% for p in cands %}<tr><td class="mono">{{ p.payment_no }}</td><td>{{ p.remit_date|fd }}</td><td>{{ p.reason|default:"—" }}</td><td class="num">{{ p.deduction_h|n }}</td>
+    <td><button class="btn sm {% if forloop.first %}pri{% endif %}" hx-post="/returns/{{ r.rtv_no }}/link/" hx-vals='{"payment_no": "{{ p.payment_no }}"}' hx-swap="none" {% perm 'dispute' %}>Match</button></td></tr>{% endfor %}</tbody></table></div>
+    <p class="small muted">Up to the value received ({{ r.received_h|sar }}) is accepted; anything Amazon deducted above that is disputed automatically.</p>
+    {% else %}<p class="muted small">No short payment yet. Amazon usually deducts returns from the next remittance.</p>{% endif %}{% endif %}
+{% elif tab == 'timeline' %}{% include "partials/timeline.html" %}
+{% elif tab == 'notes' %}{% include "partials/notes.html" %}
+{% endif %}
+{% endblock %}
+{% block hint %}{% if r.status == 'requested' %}Check the return is allowed under the agreement (defective, recall, or overstock if agreed).{% elif r.status == 'authorised' %}Count what arrives at the warehouse; shortages and damage are kept for the deduction check.{% elif r.status == 'received' %}Match the deduction when Amazon's remittance arrives.{% elif r.status == 'credited' %}Closed: the deduction matches the goods received.{% elif r.status == 'disputed' %}Amazon deducted more than came back; follow the dispute.{% else %}Refused: {{ r.note }}{% endif %}{% endblock %}
+{% block foot %}
+{% if r.status == 'requested' %}
+  <form class="row" style="flex-wrap:nowrap;gap:6px" hx-post="/returns/{{ r.rtv_no }}/refuse/" hx-swap="none"><input type="hidden" name="version" value="{{ r.version }}">
+  <input class="inp" name="reason" placeholder="Why refuse" aria-label="Reason to refuse" style="width:170px" {% if not caps.dispute %}disabled{% endif %}><button class="btn danger" type="submit" {% perm 'dispute' %}>Refuse</button></form>
+  <button class="btn pri" hx-post="/returns/{{ r.rtv_no }}/authorise/" hx-vals='{"version": "{{ r.version }}"}' hx-swap="none" {% perm 'dispute' %}>{% icon 'check' %}<span>Authorise return</span></button>
+{% elif r.status == 'authorised' %}
+  <button class="btn pri" hx-post="/returns/{{ r.rtv_no }}/receive/" hx-include="#rtv-recv" hx-swap="none" {% perm 'ship' %}>{% icon 'box' %}<span>Record goods received</span></button>
+{% endif %}
+{% endblock %}

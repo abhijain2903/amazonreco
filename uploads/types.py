@@ -19,7 +19,7 @@ def is_fee(code):
 NUM_FIELDS = {"case_pack", "agreed_cost_sar", "free_stock", "qty_ordered", "unit_cost_sar", "qty", "cartons", "amount_paid_sar",
               "deduction_sar", "support_per_unit_sar", "expected_units", "units", "rate_sar", "amount_sar"}
 DATE_FIELDS = {"valid_from", "valid_to", "order_date", "ship_window_start", "ship_window_end", "ship_date",
-               "remit_date", "start_date", "end_date", "dn_date", "cn_date"}
+               "remit_date", "start_date", "end_date", "dn_date", "cn_date", "request_date"}
 
 # (field, required, synonyms)
 TYPES = OrderedDict([
@@ -58,6 +58,10 @@ TYPES = OrderedDict([
         ("rate_sar", 1, ["rate", "amountperunit"]), ("amount_sar", 0, ["amount", "total"])])),
     ("U9", dict(name="Credit notes", src="Finance / SAP", go="/claims/?tab=closed", perm="cn", cols=[
         ("cn_no", 1, ["cn", "creditnote"]), ("claim_no", 1, ["claim"]), ("cn_date", 1, ["date"]), ("amount_sar", 1, ["amount", "value"])])),
+    ("U10", dict(name="Returns (RTV)", src="Vendor Central returns", go="/returns/?tab=todo", cols=[
+        ("rtv_no", 1, ["rtv", "return", "returnid", "authorization", "ra", "rano"]), ("request_date", 1, ["date", "requested", "returndate"]),
+        ("sku_code", 1, ["sku", "asin", "model"]), ("qty", 1, ["quantity", "units"]), ("unit_cost_sar", 0, ["cost", "unitcost", "price"]),
+        ("reason", 0, ["returnreason"]), ("fc_code", 0, ["fc", "warehouse", "shipfrom"]), ("vendor_code", 0, ["vendor", "vendorcode"])])),
 ])
 
 
@@ -227,6 +231,14 @@ def validate(tid, o, ctx, cfg):
             e.append(f"SKU/ASIN {o['sku_code']} not found" + _did_you_mean_sku(o["sku_code"]))
         if not Promotion.objects.filter(agreement_no=o["agreement_no"]).exists():
             w.append(f"Agreement {o['agreement_no']} not in tracker. DN will be unlinked")
+    elif tid == "U10":
+        from returns.models import ReturnAuth
+        if ReturnAuth.objects.filter(rtv_no=o["rtv_no"]).exists():
+            e.append(f"Return {o['rtv_no']} already imported")
+        if not sk():
+            e.append(f"SKU/ASIN {o['sku_code']} not found" + _did_you_mean_sku(o["sku_code"]))
+        elif num(o["qty"]) is not None and num(o["qty"]) <= 0:
+            e.append("Quantity must be above 0")
     elif tid == "U9":
         from claims.models import Claim
         c = Claim.objects.filter(claim_no=o["claim_no"]).first()
@@ -445,6 +457,19 @@ def apply(tid, rows, user):
                 sh += 1
                 notify(f"Credit note short on {c.claim_no}: {fmt_sar(c.gap_h)}", "bad", ("promo", c.promotion.mecl_ref, "claim"))
         lines += [f"{created} credit notes recorded (R11)", f"{created - sh} claims closed · {sh} shortfall"]
+    elif tid == "U10":
+        from returns.models import RTV_REASONS
+        from returns.services import create_rtv
+        reasons = {k: k for k, _ in RTV_REASONS} | {"defect": "defective", "damaged": "defective", "customer": "defective",
+                                                    "overstock": "overstock", "excess": "overstock", "recall": "recall", "wrong": "wrong_item"}
+        for no, ls in group(rows, "rtv_no").items():
+            txt = str(ls[0].get("reason") or "").lower()
+            reason = next((v for k, v in reasons.items() if k in txt), "other" if txt else "defective")
+            create_rtv(user, no, [(resolve_sku(o["sku_code"]), int(num(o["qty"])), to_h(o["unit_cost_sar"]) if o.get("unit_cost_sar") else None) for o in ls],
+                       reason=reason, fc_code=str(ls[0].get("fc_code") or "").strip(), requested_at=parse_date(ls[0]["request_date"]),
+                       vendor_code=str(ls[0].get("vendor_code") or ""), source="file upload")
+            created += 1
+        lines += [f"{created} return request{'s' if created != 1 else ''} imported", "Authorise or refuse them on the Returns page"]
     return created, updated, lines
 
 
@@ -515,7 +540,8 @@ def sample_rows(tid, dry=False):
                 rows.append([no, p.po_no, l.sku.sku_code, l.qty_confirmed, -(-l.qty_confirmed // 8), in_days(2)])
     elif tid == "U6":
         paid = set(Payment.objects.values_list("invoice_id", flat=True))
-        invs = [p.invoice for p in PurchaseOrder.objects.filter(stage="invoiced").select_related("invoice") if p.invoice.pk not in paid][:3]
+        from billing.models import Invoice
+        invs = [i for i in Invoice.objects.exclude(po__stage__in=["paid", "rejected", "cancelled"]).order_by("invoice_date") if i.pk not in paid][:3]
         base = peek_number("payment", 9102200)
         for i, inv in enumerate(invs):
             ded = round(inv.total_h * 0.03) if i == 2 else 0
@@ -547,5 +573,9 @@ def sample_rows(tid, dry=False):
         for i, c in enumerate(Claim.objects.filter(status="sent").order_by("sent_at")[:2]):
             amt = c.amount_h * 0.9 if i == 1 else c.amount_h
             rows.append([f"CN-{base + i}", c.claim_no, today, f"{amt / 100:.2f}"])
+    elif tid == "U10":
+        n = rnd.randint(110000, 119999)
+        for i, s in enumerate(Sku.objects.filter(category__in=["PA", "HAV"])[:3]):
+            rows.append([f"RTV-{n}", today, s.sku_code, 2 + i, "", "Defective - customer return", "RUH-FC1", ""])
     name = re.sub(r"[^a-z]+", "_", TYPES[tid]["name"].lower()).strip("_")
     return f"sample_{tid}_{name}.csv", rows

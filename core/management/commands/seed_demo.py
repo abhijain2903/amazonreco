@@ -67,8 +67,68 @@ class Command(BaseCommand):
             self.promos()
             self.notices()
             self.messy()
+            self.backorder_demo()
+            self.returns_demo()
             self.vendor_codes()
         self.stdout.write(self.style.SUCCESS("Example data loaded."))
+
+    def backorder_demo(self):
+        """A PO confirmed with part of a line backordered: the first shipment is delivered and invoiced, the rest is
+        due in three days (stage: backorder open)."""
+        from billing.services import _invoice
+        from fulfilment.services import _book_slot, _deliver, _submit_asn, make_delivery
+        from orders.services import _book, _confirm, _release
+        N = self.names
+        po = self.mk_po(18, 3)
+        self.accept_all(po)
+        l = po.lines.order_by("position").first()
+        half = max(1, l.qty_ordered // 2)
+        l.decision, l.qty_confirmed, l.qty_backorder = "backorder", l.qty_ordered - half, half
+        l.reason, l.backorder_eta = "Backordered: in transit from supplier", (self.now + timedelta(days=3)).date()
+        l.save()
+        at = po.order_date + timedelta(hours=5)
+        _confirm(po, at, name=N["PIC"])
+        at += timedelta(hours=6)
+        _book(po, at, name=N["Planning"], sap_order_no=str(next_number("sap_order", 4500018420)))
+        at += timedelta(hours=8)
+        _release(po, at, name=N["Credit"], with_delivery=False)
+        make_delivery(po, at + timedelta(hours=2), ship_date=at + timedelta(days=1))
+        at += timedelta(days=1)
+        _submit_asn(po, at, name=N["Logistics"])
+        at += timedelta(hours=3)
+        _book_slot(po, at, f"CC{next_number('slot', 66120)}", po.shipment.ship_date + timedelta(hours=10), "08:00–12:00", name=N["Logistics"])
+        _deliver(po, po.shipment.slot_start + timedelta(hours=1), name=N["Logistics"])
+        _invoice(po, po.shipment.slot_start + timedelta(hours=8), name=N["PIC"])
+
+    def returns_demo(self):
+        """Three Amazon returns: one to authorise, one on its way back, one received and waiting for its deduction
+        (with a short payment whose reason reads as a return)."""
+        from payments.services import import_payment
+        from returns.services import create_rtv
+        from orders.models import PurchaseOrder
+        pa = list(self.by_cat["PA"])[:4]
+        hav = list(self.by_cat["HAV"])[:2]
+        create_rtv(None, "RTV-118842", [(pa[0], 6, None), (pa[1], 4, None)], reason="defective", fc_code=self.fcs[0].code,
+                   requested_at=self.t(-1, -3), name="Vendor Central import", source="file upload")
+        b = create_rtv(None, "RTV-118517", [(hav[0], 3, None)], reason="overstock", fc_code=self.fcs[1].code,
+                       requested_at=self.t(-6), name="Vendor Central import", source="file upload")
+        b.status, b.authorised_at = "authorised", self.t(-5)
+        b.save()
+        c = create_rtv(None, "RTV-117903", [(pa[2], 5, None), (pa[3], 2, None)], reason="defective", fc_code=self.fcs[0].code,
+                       requested_at=self.t(-16), name="Vendor Central import", source="file upload")
+        lines = list(c.lines.all())
+        lines[0].qty_received, lines[0].condition = 4, "good"          # one unit never arrived
+        lines[1].qty_received, lines[1].condition = 2, "damaged"
+        for l in lines:
+            l.save()
+        c.status, c.authorised_at, c.received_at = "received", self.t(-15), self.t(-8)
+        c.save()
+        # Amazon deducts the full return value from a later payment (one unit more than came back)
+        po = PurchaseOrder.objects.filter(stage="invoiced").order_by("order_date").last()
+        inv = po.invoice
+        if not inv.payments.exists():
+            import_payment(f"RMT-{next_number('payment', 9102200)}", self.t(-2), inv.invoice_no, inv.total_h - c.amount_h,
+                           c.amount_h, f"Vendor returns - {c.rtv_no}", at=self.t(-2))
 
     def vendor_codes(self):
         """Two Amazon vendor codes: audio (personal and home audio) and vision (TV, digital imaging, bundles)."""
@@ -98,7 +158,7 @@ class Command(BaseCommand):
     # ---------- helpers ----------
     def reset(self):
         labels = ["core", "rules", "catalog", "orders", "fulfilment", "billing", "payments", "promotions", "debitnotes", "claims",
-                  "uploads", "integrations", "matching"]
+                  "uploads", "integrations", "matching", "returns"]
         tables = [m._meta.db_table for l in labels for m in apps.get_app_config(l).get_models()]
         tables += [User._meta.db_table, User.groups.through._meta.db_table, User.user_permissions.through._meta.db_table]
         with connection.cursor() as c:
@@ -267,7 +327,7 @@ class Command(BaseCommand):
         from orders.models import PurchaseOrder
         from payments.models import Dispute, Payment
         from payments.services import import_payment
-        inv = sorted([p.invoice for p in PurchaseOrder.objects.filter(stage="invoiced").select_related("invoice")], key=lambda i: i.invoice_date)
+        inv = sorted([p.invoice for p in PurchaseOrder.objects.filter(stage="invoiced")], key=lambda i: i.invoice_date)
         # short-paid, open (flow F4)
         l0 = inv[0].lines.first()
         amt = round(min(l0.qty, 2) * l0.price_h * 1.15)
@@ -397,7 +457,7 @@ class Command(BaseCommand):
         from payments.models import Payment
         from payments.services import import_payment
         taken = {x for p in Payment.objects.all() for x in (p.invoice_id and p.invoice.invoice_no, p.invoice_ref, p.hint) if x}
-        inv = sorted([p.invoice for p in PurchaseOrder.objects.filter(stage="invoiced").select_related("invoice")
+        inv = sorted([p.invoice for p in PurchaseOrder.objects.filter(stage="invoiced")
                       if p.invoice.invoice_no not in taken], key=lambda i: i.invoice_date)
         # 1. One remittance line paying two invoices
         a, b = inv[0], inv[1]

@@ -66,6 +66,7 @@ INSTALLED_APPS = [
     "uploads",
     "integrations",
     "matching",
+    "returns",
 ]
 
 MIDDLEWARE = [

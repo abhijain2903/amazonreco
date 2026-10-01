@@ -16,6 +16,29 @@ from .models import Dispute, DisputeEvidence, Payment
 COUNTED = ["matched", "short", "accepted", "disputed", "recovered"]
 
 
+SETTLED = {"matched", "accepted", "recovered"}
+
+
+def invoice_settled(inv):
+    """Nothing more to collect on the invoice: every payment on it is closed (matched, deduction accepted or recovered)
+    and there is at least one — or credit memos cover it entirely."""
+    sts = [p.status for p in inv.payments.all()]
+    return (bool(sts) and all(s in SETTLED for s in sts)) or inv.net_due_h <= 0
+
+
+def settle_po(po, at=None):
+    """Mark the PO paid once everything is shipped and invoiced (no backorder open) and every invoice is settled."""
+    if po.stage != "invoiced":
+        return False
+    invs = list(po.invoices.prefetch_related("payments", "credit_memos"))
+    if not invs or not all(invoice_settled(i) for i in invs):
+        return False
+    po.stage, po.paid_at = "paid", at or timezone.now()
+    po.bump()
+    po.save()
+    return True
+
+
 def norm(ref):
     return re.sub(r"[^A-Z0-9]", "", str(ref or "").upper())
 
@@ -25,7 +48,7 @@ def find_invoice(ref):
     if inv:
         return inv
     n = norm(ref)
-    for i in Invoice.objects.select_related("po").filter(po__stage="invoiced"):
+    for i in Invoice.objects.select_related("po").exclude(po__stage__in=["paid", "rejected", "cancelled"]):
         if norm(i.invoice_no) == n:
             return i
     return None
@@ -59,9 +82,7 @@ def _apply_recovery(p, d, at=None):
     d.save()
     Payment.objects.filter(payment_no=d.ref).update(status="recovered")
     po = d.po
-    po.stage, po.paid_at = "paid", p.remit_date
-    po.bump()
-    po.save()
+    settle_po(po, p.remit_date)
     audit("dispute", d.case_no, f"Amazon paid back {fmt_sar(p.paid_h)} in payment {p.payment_no}" + (f" (part of {fmt_sar(d.amount_h)})" if part else ""),
           name="Auto-match", system=True, action="recovered", at=at)
     audit("po", po.po_no, f"Dispute {d.case_no} recovered: {fmt_sar(p.paid_h)} in payment {p.payment_no}", name="Auto-match",
@@ -90,9 +111,8 @@ def match_payment(p, at=None, cfg=None):
     if engine.payment_match(p.paid_h, due, cfg) == "matched":
         p.status, p.deduction_h = "matched", 0
         po = inv.po
-        po.stage, po.paid_at = "paid", p.remit_date
-        po.bump()
-        po.save()
+        p.save()
+        settle_po(po, p.remit_date)
         audit("po", po.po_no, f"Payment {p.payment_no} matched: {fmt_sar(p.paid_h)}", name="Auto-match", system=True,
               action="payment", at=at)
     else:
@@ -217,9 +237,7 @@ def accept_deduction(user, payment_no, reason):
     p.status = "accepted"
     p.save()
     po = p.po
-    po.stage, po.paid_at = "paid", timezone.now()
-    po.bump()
-    po.save()
+    settle_po(po, timezone.now())
     audit("po", po.po_no, f"Deduction of {fmt_sar(p.deduction_h)} accepted: {reason}", user, action="accept_deduction",
           reason=reason)
     return p
@@ -241,9 +259,7 @@ def link_to_dn(user, payment_no, dn_no):
     p.reason = f"{p.reason} · linked to {dn_no}".strip(" ·")
     p.save()
     po = p.po
-    po.stage, po.paid_at = "paid", timezone.now()
-    po.bump()
-    po.save()
+    settle_po(po, timezone.now())
     audit("po", po.po_no, f"Deduction {fmt_sar(p.deduction_h)} linked to debit note {dn_no}", user, action="link_dn")
     return p
 
@@ -276,8 +292,6 @@ def set_dispute_status(user, case_no, status, recovered_h=None, case_id=None):
         p.save()
         if p.po:
             po = p.po
-            po.stage, po.paid_at = "paid", timezone.now()
-            po.bump()
-            po.save()
+            settle_po(po, timezone.now())
             audit("po", po.po_no, f"Dispute {d.case_no} {status}", user, action="dispute_" + status)
     return d

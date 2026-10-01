@@ -12,24 +12,19 @@ from .models import Invoice, SapBilling
 
 
 def billing_of(po):
-    try:
-        return po.sap_billing
-    except SapBilling.DoesNotExist:
-        return None
+    return po.sap_billing
 
 
 def invoice_of(po):
-    try:
-        return po.invoice
-    except Invoice.DoesNotExist:
-        return None
+    return po.invoice
 
 
 def make_billing(po, at, mismatch=False, billing_no=None):
-    """SAP billing document for a delivered order (SAP sync or simulation)."""
+    """SAP billing document for a delivered shipment (SAP sync or simulation). One per shipment."""
     sh = shipment_of(po)
     cost = {l.sku_id: l.cost_h for l in po.lines.all()}
-    b = SapBilling.objects.create(po=po, billing_no=billing_no or str(next_number("sap_billing", 9000100000)), received_at=at)
+    b = SapBilling.objects.create(po=po, seq=sh.seq, shipment=sh, billing_no=billing_no or str(next_number("sap_billing", 9000100000)),
+                                  received_at=at)
     for i, l in enumerate(sh.lines.all()):
         b.lines.create(sku_id=l.sku_id, qty=l.qty + (2 if mismatch and i == 0 else 0), price_h=cost[l.sku_id])
     audit("po", po.po_no, f"SAP billing document {b.billing_no} received", name="SAP sync", system=True,
@@ -40,7 +35,7 @@ def make_billing(po, at, mismatch=False, billing_no=None):
 def invoice_checks(po, cfg=None):
     cfg = cfg or get_cfg()
     b, sh = billing_of(po), shipment_of(po)
-    if not b or not sh:
+    if not b or not sh or b.seq != sh.seq:
         return []
     cost = {l.sku_id: l.cost_h for l in po.lines.all()}
     bl = {x.sku_id: x for x in b.lines.all()}
@@ -78,15 +73,21 @@ def _invoice(po, at, user=None, name=None):
     lines = [(l.sku_id, l.qty, cost[l.sku_id]) for l in sh.lines.all()]
     net = sum(q * p for _, q, p in lines)
     vat = vat_h(net)
-    inv = Invoice.objects.create(po=po, invoice_no=f"MEI-2026-{next_number('invoice', 4310):05d}", invoice_date=at,
-                                 net_h=net, vat_h=vat, total_h=net + vat, sap_billing_no=b.billing_no)
+    inv = Invoice.objects.create(po=po, seq=sh.seq, shipment=sh, invoice_no=f"MEI-2026-{next_number('invoice', 4310):05d}",
+                                 invoice_date=at, net_h=net, vat_h=vat, total_h=net + vat, sap_billing_no=b.billing_no)
     for sku_id, q, p in lines:
         inv.lines.create(sku_id=sku_id, qty=q, price_h=p, net_h=q * p)
-    po.stage = "invoiced"
+    from fulfilment.services import open_qty
+    left = open_qty(po)
+    po.stage = "backorder" if left else "invoiced"
     po.bump()
     po.save()
-    audit("po", po.po_no, f"Invoice {inv.invoice_no} submitted to Amazon for SAR {round(inv.total_h / 100):,}", user,
+    audit("po", po.po_no, f"Invoice {inv.invoice_no}" + (f" (shipment {sh.seq})" if sh.seq > 1 or left else "")
+          + f" submitted to Amazon for SAR {round(inv.total_h / 100):,}" + (f". {left:,} units still to ship" if left else ""), user,
           name=name, action="invoice", at=at)
+    if po.stage == "invoiced":
+        from payments.services import settle_po
+        settle_po(po, at)          # earlier invoices may already be paid
     return inv
 
 
@@ -189,13 +190,12 @@ def issue_credit_memo(user, po_no, amount_h, reason, memo_no=""):
     rows = [["credit_memo_no", "invoice_no", "po_no", "amount_sar", "reason"], [memo_no, inv.invoice_no, po.po_no, f"{amount_h / 100:.2f}", reason]]
     save_file("credit_memo", f"Credit_memo_{memo_no}.csv", rows, "po", po.po_no)
     paid = Payment.objects.filter(invoice=inv, status__in=COUNTED).aggregate(s=Sum("paid_h"))["s"] or 0
-    if po.stage == "invoiced" and engine.payment_match(paid, inv.net_due_h, get_cfg()) == "matched":
+    if engine.payment_match(paid, inv.net_due_h, get_cfg()) == "matched" and paid:
         for p in Payment.objects.filter(invoice=inv, status="short"):
             p.status = "accepted"
             p.reason = f"{p.reason} · settled by credit memo {memo_no}".strip(" ·")
             p.save()
-        po.stage, po.paid_at = "paid", timezone.now()
-        po.bump()
-        po.save()
-        audit("po", po.po_no, f"Paid in full after credit memo {memo_no}", user, action="paid")
+        from payments.services import settle_po
+        if settle_po(po, timezone.now()):
+            audit("po", po.po_no, f"Paid in full after credit memo {memo_no}", user, action="paid")
     return m

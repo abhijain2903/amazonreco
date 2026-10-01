@@ -6,7 +6,8 @@ from orders.models import PurchaseOrder
 
 
 class SapDelivery(Base):
-    po = models.OneToOneField(PurchaseOrder, on_delete=models.CASCADE, related_name="sap_delivery")
+    po = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, related_name="sap_deliveries")
+    seq = models.PositiveIntegerField(default=1, help_text="1st, 2nd … delivery for the PO")
     delivery_no = models.CharField(max_length=20, unique=True)
     cartons = models.IntegerField(default=1)
     ship_date = models.DateTimeField()
@@ -25,7 +26,9 @@ class SapDeliveryLine(Base):
 class Shipment(Base):
     """The ASN sent to Amazon, plus its Carrier Central delivery slot."""
 
-    po = models.OneToOneField(PurchaseOrder, on_delete=models.CASCADE, related_name="shipment")
+    po = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, related_name="shipments")
+    seq = models.PositiveIntegerField(default=1, help_text="1st, 2nd … shipment for the PO")
+    delivered_at = models.DateTimeField(null=True, blank=True)
     asn_no = models.CharField(max_length=20, unique=True)
     sap_delivery_no = models.CharField(max_length=20)
     cartons = models.IntegerField()

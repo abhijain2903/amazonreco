@@ -3,12 +3,12 @@ from django.db import models
 from catalog.models import FulfilmentCentre, Sku
 from core.models import Base
 
-STAGES = ["new", "confirmed", "booked", "released", "asn", "slot", "delivered", "invoiced", "paid"]
+STAGES = ["new", "confirmed", "booked", "released", "asn", "slot", "delivered", "invoiced", "backorder", "paid"]
 STAGE_LABELS = {"new": "To confirm", "confirmed": "Confirmed", "booked": "Booked in SAP", "released": "Released",
-                "asn": "ASN sent", "slot": "Slot booked", "delivered": "Delivered", "invoiced": "Invoiced",
+                "asn": "ASN sent", "slot": "Slot booked", "delivered": "Delivered", "invoiced": "Invoiced", "backorder": "Backorder open",
                 "paid": "Paid", "rejected": "Rejected", "cancelled": "Cancelled by Amazon"}
 STAGE_TONES = {"new": "info", "confirmed": "info", "booked": "info", "released": "info", "asn": "info",
-               "slot": "info", "delivered": "info", "invoiced": "pri", "paid": "ok", "rejected": "bad", "cancelled": "bad"}
+               "slot": "info", "delivered": "info", "invoiced": "pri", "backorder": "warn", "paid": "ok", "rejected": "bad", "cancelled": "bad"}
 CLOSED = ["paid", "rejected", "cancelled"]
 
 
@@ -37,6 +37,26 @@ class PurchaseOrder(Base):
     def __str__(self):
         return self.po_no
 
+    # Several deliveries / shipments / invoices per PO (split shipments, backorders): these give the latest one.
+    def _latest(self, rel):
+        return getattr(self, rel).order_by("-seq", "-created_at").first() if self.pk else None
+
+    @property
+    def sap_delivery(self):
+        return self._latest("sap_deliveries")
+
+    @property
+    def shipment(self):
+        return self._latest("shipments")
+
+    @property
+    def sap_billing(self):
+        return self._latest("sap_billings")
+
+    @property
+    def invoice(self):
+        return self._latest("invoices")
+
     @property
     def stage_index(self):
         return STAGES.index(self.stage) if self.stage in STAGES else -1
@@ -47,17 +67,24 @@ class PurchaseOrder(Base):
 
 
 class PoLine(Base):
-    DECISIONS = [("accept", "Accept"), ("partial", "Partial"), ("reject", "Reject")]
+    DECISIONS = [("accept", "Accept"), ("partial", "Partial"), ("backorder", "Backorder rest"), ("reject", "Reject")]
     po = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, related_name="lines")
     position = models.PositiveIntegerField(default=0)
     sku = models.ForeignKey(Sku, on_delete=models.PROTECT)
     asin = models.CharField(max_length=12)
     qty_ordered = models.IntegerField()
     cost_h = models.BigIntegerField()
-    decision = models.CharField(max_length=8, choices=DECISIONS, default="accept")
-    qty_confirmed = models.IntegerField(default=0)
+    decision = models.CharField(max_length=10, choices=DECISIONS, default="accept")
+    qty_confirmed = models.IntegerField(default=0, help_text="Units confirmed to ship now")
+    qty_backorder = models.IntegerField(default=0, help_text="Units acknowledged as backordered, shipped later")
+    backorder_eta = models.DateField(null=True, blank=True)
     reason = models.CharField(max_length=120, blank=True)
     touched = models.BooleanField(default=False, help_text="User changed the suggested decision")
 
     class Meta:
         ordering = ["position"]
+
+    @property
+    def committed(self):
+        """Everything ME agreed to ship on this line: now plus backorder."""
+        return self.qty_confirmed + self.qty_backorder

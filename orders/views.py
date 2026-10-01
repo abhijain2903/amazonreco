@@ -22,10 +22,10 @@ from .models import STAGE_LABELS, STAGES, PoLine, PurchaseOrder
 from .services import REASONS, get_po, line_checks, po_issues, po_units, po_value_h
 
 TABS = [("new", "To confirm", ["new"]), ("book", "To book", ["confirmed"]), ("release", "To release", ["booked"]),
-        ("ship", "In fulfilment", ["released", "asn", "slot", "delivered"]), ("done", "Invoiced & paid", ["invoiced", "paid", "rejected", "cancelled"]),
+        ("ship", "In fulfilment", ["released", "asn", "slot", "delivered", "backorder"]), ("done", "Invoiced & paid", ["invoiced", "paid", "rejected", "cancelled"]),
         ("all", "All", None)]
 OWNER = {"new": "PIC", "confirmed": "Planning", "booked": "Credit", "released": "PIC", "asn": "Logistics", "slot": "Logistics",
-         "delivered": "PIC", "invoiced": "Finance", "paid": "Finance"}
+         "delivered": "PIC", "invoiced": "Finance", "backorder": "Logistics", "paid": "Finance"}
 
 
 def pos_list(request):
@@ -132,6 +132,11 @@ def drawer(request, po_no):
         ctx["tot_ordered"] = sum(l.qty_ordered for l in lines)
         ctx["tot_conf"] = sum(l.qty_confirmed for l in lines)
         ctx["tot_value"] = sum(l.qty_confirmed * l.cost_h for l in lines)
+    from fulfilment.services import open_qty, shipped_qty
+    ctx.update(shipped=shipped_qty(po), any_bo=any(l.qty_backorder for l in lines), open_units=open_qty(po) if po.stage not in ("new", "rejected", "cancelled") else 0,
+               invs=list(po.invoices.order_by("seq").prefetch_related("payments", "credit_memos")),
+               ships=list(po.shipments.order_by("seq")),
+               bo_eta=min((l.backorder_eta for l in lines if l.qty_backorder and l.backorder_eta), default=None))
     if tab == "shipment" or po.stage == "released":
         ck = asn_checks(po, cfg)
         ctx.update(asn=ck, asn_blocked=any(not c["asn_ok"] for c in ck), asn_short=any(not c["del_ok"] for c in ck),
@@ -185,10 +190,10 @@ def drawer(request, po_no):
 def _line_values(post):
     vals = {}
     for k, v in post.items():
-        if k[:2] in ("d-", "q-", "r-"):
+        if k[:2] in ("d-", "q-", "r-", "e-"):
             lid = k[2:]
-            cur = list(vals.get(lid, (None, None, None)))
-            cur["dqr".index(k[0])] = v
+            cur = list(vals.get(lid, (None, None, None, None)))
+            cur["dqre".index(k[0])] = v
             vals[lid] = tuple(cur)
     return vals
 
@@ -270,6 +275,18 @@ def slot(request, po_no):
     from core.services import peek_number
     return render(request, "dialogs/slot.html", dict(po=po, sh=sh, next_slot=f"CC{peek_number('slot', 66120)}", again=po.stage == "slot" or bool(sh.slot_outcome),
                   units=sum(l.qty for l in sh.lines.all()), day=timezone.localtime(sh.ship_date + timedelta(hours=10)).date().isoformat()))
+
+
+@require_POST
+def ship_backorder(request, po_no):
+    po = svc.ship_backorder(request.user, po_no, request.POST.get("version"))
+    return htmx.done(request, f"{po.po_no}: next shipment opened" + (". SAP delivery received" if delivery_of(po) else ". Upload the SAP delivery (U5)"))
+
+
+@require_POST
+def close_backorder(request, po_no):
+    svc.close_backorder(request.user, po_no, request.POST.get("reason", ""), request.POST.get("version"))
+    return htmx.done(request, f"{po_no}: backorder closed", "info")
 
 
 def change(request, po_no):

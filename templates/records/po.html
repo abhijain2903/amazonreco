@@ -27,15 +27,15 @@
       <td class="num {% if not c.price_ok %}bad-t{% endif %}">{{ l.cost_h|n2 }}</td>
       <td class="num">{{ c.agreed_h|n2 }}{% if not c.price_ok %}<div class="small bad-t">{{ c.diff_h|n2 }}</div>{% endif %}</td>
       <td><select class="sel" id="d-{{ l.pk }}" name="d-{{ l.pk }}" aria-label="Decision" {% if not caps.confirm %}disabled{% endif %}>{% for v, lab in l.DECISIONS %}<option value="{{ v }}" {% if l.decision == v %}selected{% endif %}>{{ lab }}</option>{% endfor %}</select></td>
-      <td class="num"><input class="inp sm qty" id="q-{{ l.pk }}" name="q-{{ l.pk }}" type="number" min="0" max="{{ l.qty_ordered }}" value="{{ l.qty_confirmed }}" aria-label="Confirm quantity" {% if l.decision != 'partial' or not caps.confirm %}readonly{% endif %}></td>
+      <td class="num"><input class="inp sm qty" id="q-{{ l.pk }}" name="q-{{ l.pk }}" type="number" min="0" max="{{ l.qty_ordered }}" value="{{ l.qty_confirmed }}" aria-label="Confirm quantity" {% if l.decision != 'partial' and l.decision != 'backorder' or not caps.confirm %}readonly{% endif %}>{% if l.decision == 'backorder' %}<div class="small muted" style="margin-top:4px">+{{ l.qty_backorder|num }} later, by</div><input class="inp sm" type="date" name="e-{{ l.pk }}" value="{{ l.backorder_eta|date:'Y-m-d' }}" aria-label="Backorder expected date" style="width:132px" {% if not caps.confirm %}readonly{% endif %}>{% endif %}</td>
       <td><select class="sel" id="r-{{ l.pk }}" name="r-{{ l.pk }}" aria-label="Reason" style="max-width:210px" {% if not caps.confirm %}disabled{% endif %}>{% for rs in reasons|get:l.decision %}<option value="{{ rs }}" {% if l.reason == rs %}selected{% endif %}>{% if rs %}{{ rs }}{% else %}No reason needed{% endif %}</option>{% endfor %}</select>{% if r.need_reason %}<div class="small bad-t">Pick an override reason</div>{% endif %}</td>
     </tr>{% endwith %}{% endfor %}</tbody>
     <tfoot><tr><td></td><td>Total</td><td class="num">{{ tot_ordered|num }}</td><td></td><td></td><td></td><td></td><td class="num">{{ tot_conf|num }}</td><td class="num">{{ tot_value|sar }}</td></tr></tfoot></table></div>
     </form>
   {% else %}
-    <div class="tw"><table class="dt compact"><thead><tr><th>Model</th><th>ASIN</th><th class="num">Ordered</th><th class="num">Confirmed</th><th class="num">Cost SAR</th><th class="num">Line value SAR</th><th>Decision</th></tr></thead><tbody>
-    {% for l in lines %}<tr><td><b style="font-weight:500">{{ l.sku.model_no }}</b><div class="small muted">{{ l.sku.description }}</div></td><td class="mono">{{ l.asin }}</td><td class="num">{{ l.qty_ordered|num }}</td><td class="num">{{ l.qty_confirmed|num }}</td><td class="num">{{ l.cost_h|n2 }}</td><td class="num">{{ l.qty_confirmed|mul:l.cost_h|n }}</td>
-    <td>{% if l.decision == 'accept' %}{% chip "Accepted" "ok" %}{% elif l.decision == 'partial' %}{% chip "Partial" "warn" %}{% else %}{% chip "Rejected" "bad" %}{% endif %}{% if l.reason %}<div class="small muted">{{ l.reason }}</div>{% endif %}</td></tr>{% endfor %}
+    <div class="tw"><table class="dt compact"><thead><tr><th>Model</th><th>ASIN</th><th class="num">Ordered</th><th class="num">Confirmed</th>{% if any_bo %}<th class="num">Backorder</th>{% endif %}<th class="num">Shipped</th><th class="num">Cost SAR</th><th class="num">Line value SAR</th><th>Decision</th></tr></thead><tbody>
+    {% for l in lines %}<tr><td><b style="font-weight:500">{{ l.sku.model_no }}</b><div class="small muted">{{ l.sku.description }}</div></td><td class="mono">{{ l.asin }}</td><td class="num">{{ l.qty_ordered|num }}</td><td class="num">{{ l.qty_confirmed|num }}</td>{% if any_bo %}<td class="num">{% if l.qty_backorder %}{{ l.qty_backorder|num }}{% if l.backorder_eta %}<div class="small muted">by {{ l.backorder_eta|date:"j M" }}</div>{% endif %}{% else %}—{% endif %}</td>{% endif %}<td class="num">{{ shipped|get:l.sku_id|default:0|num }}</td><td class="num">{{ l.cost_h|n2 }}</td><td class="num">{{ l.committed|mul:l.cost_h|n }}</td>
+    <td>{% if l.decision == 'accept' %}{% chip "Accepted" "ok" %}{% elif l.decision == 'partial' %}{% chip "Partial" "warn" %}{% elif l.decision == 'backorder' %}{% chip "Backordered" "warn" %}{% else %}{% chip "Rejected" "bad" %}{% endif %}{% if l.reason %}<div class="small muted">{{ l.reason }}</div>{% endif %}</td></tr>{% endfor %}
     </tbody></table></div>
   {% endif %}
 
@@ -61,6 +61,8 @@
   {% else %}
     <div class="kv2"><div><span>ASN</span><b class="mono">{{ sh.asn_no }}</b></div><div><span>SAP delivery</span><b class="mono">{{ sh.sap_delivery_no }}</b></div><div><span>Cartons</span><b>{{ sh.cartons }}</b></div><div><span>Ship date</span><b>{{ sh.ship_date|fdt }}</b></div>
     <div><span>{% if sh.freight == 'collect' %}Amazon pickup (collect){% else %}Carrier Central slot{% endif %}</span><b>{% if sh.slot_id %}<span class="mono">{{ sh.slot_id }}</span> · {{ sh.slot_start|fdt }}{% else %}<span class="warn-t">Not booked</span>{% endif %}</b></div><div><span>Delivered</span><b>{{ po.delivered_at|fdt }}</b></div></div>
+    {% if ships|length > 1 %}<div class="tw"><table class="dt compact"><thead><tr><th>#</th><th>ASN</th><th>Ships</th><th>Delivered</th><th class="num">Units</th></tr></thead><tbody>{% for x in ships %}<tr{% if x == sh %} class="sel"{% endif %}><td>{{ x.seq }}</td><td class="mono">{{ x.asn_no }}</td><td>{{ x.ship_date|fd }}</td><td>{% if x.delivered_at %}{{ x.delivered_at|fd }}{% else %}<span class="faint">—</span>{% endif %}</td><td class="num">{{ x.lines.all|sum_qty|num }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
+    {% if open_units %}<div class="banner warn">{% icon 'clock' %}<span class="t"><b>{{ open_units|num }} units still to ship</b> on this PO (backorder or a short delivery). They go in the next shipment.</span></div>{% endif %}
     {% if sh.slot_outcome %}<div class="banner bad">{% icon 'alert' %}<span class="t"><b>Last appointment {{ sh.slot_outcome }}:</b> {{ sh.slot_note }}. Book a new slot.</span></div>{% endif %}
     {% if needs_pod %}<div class="banner warn">{% icon 'alert' %}<span class="t"><b>No proof of delivery attached.</b> Attach the signed POD / GRN so a shortage Amazon deducts later can be disputed.</span><button class="btn sm" hx-get="{{ base }}?tab=docs" hx-target="#drawer">Attach POD</button></div>{% endif %}
     {% if slot_risk %}<div class="banner bad">{% icon 'alert' %}<span class="t"><b>No delivery slot and the truck ships {{ sh.ship_date|due }}.</b> Book a Carrier Central slot now.</span></div>{% endif %}
@@ -70,8 +72,13 @@
   {% endif %}
 
 {% elif tab == 'invoice' %}
-  {% if po.stage_index < 6 and po.stage != 'rejected' and po.stage != 'cancelled' %}
+  {% if invs|length > 1 or invs and po.stage_index < 7 %}<h3 class="sect-h">Invoices on this PO (one per shipment)</h3>
+  <div class="tw"><table class="dt compact"><thead><tr><th>#</th><th>Invoice</th><th>Date</th><th class="num">Total SAR</th><th class="num">Paid SAR</th><th>Status</th></tr></thead><tbody>
+  {% for x in invs %}<tr><td>{{ x.seq }}</td><td class="mono">{{ x.invoice_no }}</td><td>{{ x.invoice_date|fd }}</td><td class="num">{{ x.total_h|n }}</td><td class="num">{{ x.payments.all|sum_paid|n }}</td><td>{% for p in x.payments.all %}{{ p.get_status_display }}{% if not forloop.last %}, {% endif %}{% empty %}<span class="faint">Not paid yet</span>{% endfor %}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
+  {% if po.stage_index < 6 and po.stage != 'rejected' and po.stage != 'cancelled' and not invs %}
     <div class="empty"><div class="ei">{% icon 'receipt' %}</div><b>Not delivered yet</b><span>The invoice is built from the SAP billing document after delivery.</span></div>
+  {% elif po.stage_index < 6 and po.stage != 'rejected' and po.stage != 'cancelled' %}
+    <p class="small muted">Shipment {{ ships|length|add:0 }} is on its way; its invoice is built after delivery.</p>
   {% elif po.stage == 'delivered' %}
     {% if inv_blocked %}<div class="banner bad">{% icon 'x' %}<span class="t"><b>Invoice blocked (R6).</b> SAP billed a different quantity than the ASN. Amazon would short-pay this invoice.</span></div>
     {% if demo %}<div><button class="btn" hx-post="/pos/{{ po.po_no }}/fix-billing/" hx-swap="none" {% perm 'invoice' %}>{% icon 'refresh' %}<span>Correct SAP billing to ASN qty and PO price (simulated)</span></button></div>{% endif %}
@@ -128,6 +135,7 @@
 {% elif po.stage == 'slot' %}Slot {{ sh.slot_id }} at {{ sh.slot_start|fdt }}.
 {% elif po.stage == 'delivered' %}{% if inv_blocked %}Invoice blocked until billing matches the ASN.{% else %}Submits the invoice to Amazon.{% endif %}
 {% elif po.stage == 'invoiced' %}{% if short_pay %}Short-paid by {{ short_pay.deduction_h|sar }}{% if short_pay.reason %} ({{ short_pay.reason }}){% endif %}. Dispute it, accept it or link it to a debit note.{% elif open_dispute %}Deduction disputed in {{ open_dispute.case_no }} — waiting for Amazon.{% else %}Waiting for Amazon payment. Upload the remittance report to match it.{% endif %}
+{% elif po.stage == 'backorder' %}{{ open_units|num }} units still to ship{% if bo_eta %}, expected {{ bo_eta|date:"j M" }}{% endif %}. Ship them when the stock arrives, or close the backorder.
 {% elif po.stage == 'paid' %}Paid {{ po.paid_at|fd }}. This order is complete.{% elif po.stage == 'cancelled' %}Cancelled by Amazon. Nothing more to do.{% else %}This PO was rejected in full.{% endif %}{% endblock %}
 
 {% block foot %}{% if po.stage in changeable %}<button class="btn ghost" hx-get="/pos/{{ po.po_no }}/change/" hx-target="#modal" {% perm 'confirm' %} title="Amazon changed quantities, the ship window, or cancelled the PO">Amazon change</button>{% endif %}
@@ -158,6 +166,10 @@
 {% elif po.stage == 'delivered' %}
   {% if tab == 'invoice' %}<button class="btn pri" hx-post="/pos/{{ po.po_no }}/invoice/" hx-vals='{"version": "{{ po.version }}"}' hx-swap="none" {% perm 'invoice' %} {% if inv_blocked %}disabled{% endif %}>{% icon 'send' %}<span>Submit invoice</span></button>
   {% else %}<button class="btn pri" hx-get="{{ base }}?tab=invoice" hx-target="#drawer">Build invoice</button>{% endif %}
+{% elif po.stage == 'backorder' %}
+  <form class="row" style="flex-wrap:nowrap;gap:6px" hx-post="/pos/{{ po.po_no }}/backorder/close/" hx-swap="none"><input type="hidden" name="version" value="{{ po.version }}">
+    <input class="inp" name="reason" placeholder="Why the rest won't ship" aria-label="Reason to close the backorder" style="width:190px" {% if not caps.confirm %}disabled{% endif %}><button class="btn" type="submit" {% perm 'confirm' %}>Close backorder</button></form>
+  <button class="btn pri" hx-post="/pos/{{ po.po_no }}/backorder/ship/" hx-vals='{"version": "{{ po.version }}"}' hx-swap="none" {% perm 'ship' %}>{% icon 'truck' %}<span>Ship the backorder</span></button>
 {% elif po.stage == 'invoiced' %}
   {% if short_pay %}<button class="btn pri" hx-get="/pay/{{ short_pay.payment_no }}/dispute/" hx-target="#modal" {% perm 'dispute' %}>Dispute</button>
   <button class="btn" hx-get="/pay/{{ short_pay.payment_no }}/link-dn/" hx-target="#modal" {% perm 'dispute' %}>Link to debit note</button>

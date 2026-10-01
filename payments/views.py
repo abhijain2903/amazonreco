@@ -27,7 +27,7 @@ def ageing(now=None):
     now = now or timezone.now()
     terms = settings.HUB_PAYMENT_TERMS_DAYS
     rows = []
-    invs = Invoice.objects.filter(po__stage="invoiced").select_related("po").prefetch_related(
+    invs = Invoice.objects.exclude(po__stage__in=["paid", "rejected", "cancelled"]).select_related("po").prefetch_related(
         "credit_memos", Prefetch("payments", queryset=Payment.objects.filter(status__in=COUNTED)))
     for inv in invs:
         paid = sum(p.paid_h for p in inv.payments.all())
@@ -81,7 +81,7 @@ def pay_list(request):
                     [[p.payment_no, p.remit_date, p.invoice_ref, sar(p.invoice.total_h) if p.invoice else None, sar(p.paid_h),
                       sar(p.deduction_h), p.reason, p.po.po_no if p.po else "", p.get_status_display()] for p in ps])
     counts = {"short": len(short), "match": len(unm), "matched": len(matched), "disputes": len(disputes),
-              "ageing": Invoice.objects.filter(po__stage="invoiced").count()}
+              "ageing": len(aged) if tab == "ageing" else Invoice.objects.exclude(po__stage__in=["paid", "rejected", "cancelled"]).count()}
     return render(request, "pages/pay.html", dict(tab=tab, kpis=kpis, short=short, unm=unm, matched=matched, disputes=disputes,
                   vc=vc, vcodes=VendorCode.objects.all(), aged=aged, buckets=buckets, terms=terms, aged_total=sum(r["owed"] for r in aged), aged_over=sum(r["owed"] for r in aged if r["overdue"]),
                   tabs=[dict(id=k, label=l, count=counts[k]) for k, l in TABS]))
@@ -146,7 +146,7 @@ def payment_drawer(request, key):
         return drawer(request, p.po.po_no)
     from matching.ai import available
     from matching.views import suggestions_for
-    open_inv = list(Invoice.objects.filter(po__stage="invoiced").select_related("po"))
+    open_inv = list(Invoice.objects.exclude(po__stage__in=["paid", "rejected", "cancelled"]).select_related("po"))
     return render(request, "records/payment.html", dict(p=p, invoices=open_inv, url=request.get_full_path(),
                   sugs=suggestions_for("pay_inv", p), kind="pay_inv", source=p.payment_no, perm_name="dispute", ai_on=available()))
 

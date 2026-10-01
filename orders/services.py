@@ -14,6 +14,7 @@ from .models import PurchaseOrder
 REASONS = {
     "accept": ["", "Override: new price agreed with buyer", "Override: difference accepted"],
     "partial": ["Limited stock", "Case-pack rounding", "Other"],
+    "backorder": ["Backordered: stock expected", "Backordered: in transit from supplier", "Other"],
     "reject": ["Cost differs from agreed price", "Out of stock", "Discontinued", "Other"],
 }
 
@@ -67,12 +68,30 @@ def po_value_h(po, lines=None):
     lines = lines if lines is not None else po_lines(po)
     if po.stage == "new":
         return sum(l.qty_ordered * l.cost_h for l in lines)
-    return sum(l.qty_confirmed * l.cost_h for l in lines)
+    return sum(l.committed * l.cost_h for l in lines)
 
 
 def po_units(po, lines=None):
     lines = lines if lines is not None else po_lines(po)
-    return sum((l.qty_ordered if po.stage == "new" else l.qty_confirmed) for l in lines)
+    return sum((l.qty_ordered if po.stage == "new" else l.committed) for l in lines)
+
+
+def _apply_decision(l, d):
+    """Quantities that follow from a decision: accept all, partial (the rest is cancelled), backorder (ship what is in
+    stock now, the rest later) or reject."""
+    from datetime import date
+    l.decision = d
+    if d == "accept":
+        l.qty_confirmed, l.qty_backorder = l.qty_ordered, 0
+    elif d == "reject":
+        l.qty_confirmed, l.qty_backorder = 0, 0
+    elif d == "backorder":
+        l.qty_confirmed = min(l.qty_ordered, available_stock(l))
+        l.qty_backorder = l.qty_ordered - l.qty_confirmed
+        l.backorder_eta = l.backorder_eta or date.today() + timedelta(days=14)
+    else:
+        l.qty_confirmed, l.qty_backorder = min(l.qty_ordered, max(1, available_stock(l))), 0
+    l.reason = REASONS[d][0]
 
 
 def refresh_suggestions(po, cfg=None):
@@ -82,9 +101,9 @@ def refresh_suggestions(po, cfg=None):
         if l.touched:
             continue
         d, q, r = engine.suggest(l.cost_h, agreed_cost_h(l.sku, po.order_date), l.qty_ordered, available_stock(l), cfg)
-        if (l.decision, l.qty_confirmed, l.reason) != (d, q, r):
-            l.decision, l.qty_confirmed, l.reason = d, q, r
-            l.save(update_fields=["decision", "qty_confirmed", "reason", "updated_at"])
+        if (l.decision, l.qty_confirmed, l.qty_backorder, l.reason) != (d, q, 0, r):
+            l.decision, l.qty_confirmed, l.qty_backorder, l.reason = d, q, 0, r
+            l.save(update_fields=["decision", "qty_confirmed", "qty_backorder", "reason", "updated_at"])
 
 
 def refresh_open_pos(cfg=None):
@@ -111,16 +130,11 @@ def set_line(user, po_no, line_id, decision=None, qty=None, reason=None):
         raise CommandError("This PO is already confirmed.")
     line = po.lines.select_related("sku").get(pk=line_id)
     if decision and decision != line.decision:
-        line.decision = decision
-        if decision == "accept":
-            line.qty_confirmed = line.qty_ordered
-        elif decision == "reject":
-            line.qty_confirmed = 0
-        else:
-            line.qty_confirmed = min(line.qty_ordered, max(1, available_stock(line)))
-        line.reason = REASONS[decision][0]
-    if qty is not None and line.decision == "partial":
+        _apply_decision(line, decision)
+    if qty is not None and line.decision in ("partial", "backorder"):
         line.qty_confirmed = max(0, min(line.qty_ordered, int(qty or 0)))
+        if line.decision == "backorder":
+            line.qty_backorder = line.qty_ordered - line.qty_confirmed
     if reason is not None and not decision:
         line.reason = reason
     line.touched = True
@@ -130,7 +144,7 @@ def set_line(user, po_no, line_id, decision=None, qty=None, reason=None):
 
 @transaction.atomic
 def save_lines(user, po_no, values, version=None):
-    """values: {line_id: (decision|None, qty|None, reason|None)} from the drawer form.
+    """values: {line_id: (decision|None, qty|None, reason|None, eta|None)} from the drawer form.
 
     A change bumps the PO version, so another person's older view of the lines is refused (StaleRecord)."""
     require(user, "confirm")
@@ -142,18 +156,24 @@ def save_lines(user, po_no, values, version=None):
     for l in po_lines(po):
         if str(l.pk) not in values:
             continue
-        d, q, r = values[str(l.pk)]
-        before = (l.decision, l.qty_confirmed, l.reason)
+        d, q, r, e = (list(values[str(l.pk)]) + [None])[:4]
+        before = (l.decision, l.qty_confirmed, l.qty_backorder, l.reason, l.backorder_eta)
         if d and d != l.decision:
-            l.decision = d
-            l.qty_confirmed = l.qty_ordered if d == "accept" else 0 if d == "reject" else min(l.qty_ordered, max(1, available_stock(l)))
-            l.reason = REASONS[d][0]
+            _apply_decision(l, d)
         else:
-            if l.decision == "partial" and q not in (None, ""):
+            if l.decision in ("partial", "backorder") and q not in (None, ""):
                 l.qty_confirmed = max(0, min(l.qty_ordered, int(q)))
+                if l.decision == "backorder":
+                    l.qty_backorder = l.qty_ordered - l.qty_confirmed
             if r is not None and r in REASONS[l.decision]:
                 l.reason = r
-        if (l.decision, l.qty_confirmed, l.reason) != before:
+            if e and l.decision == "backorder":
+                from datetime import date
+                try:
+                    l.backorder_eta = date.fromisoformat(e)
+                except ValueError:
+                    raise CommandError("Pick the date the backordered stock is expected.")
+        if (l.decision, l.qty_confirmed, l.qty_backorder, l.reason, l.backorder_eta) != before:
             l.touched = True
             l.save()
             changed = True
@@ -172,7 +192,7 @@ def accept_all_green(user, po_no):
     n = 0
     for l in po_lines(po):
         if line_checks(l, cfg)["tone"] == "ok":
-            l.decision, l.qty_confirmed, l.reason, l.touched = "accept", l.qty_ordered, "", True
+            l.decision, l.qty_confirmed, l.qty_backorder, l.reason, l.touched = "accept", l.qty_ordered, 0, "", True
             l.save()
             n += 1
     if n:
@@ -184,16 +204,17 @@ def accept_all_green(user, po_no):
 # ---------- stage commands ----------
 def _confirm(po, at, user=None, name=None):
     lines = po_lines(po)
-    accepted = [l for l in lines if l.qty_confirmed > 0]
+    accepted = [l for l in lines if l.committed > 0]
     po.stage = "confirmed" if accepted else "rejected"
     po.confirmed_at = at
     po.bump()
     po.save()
     text = ("PO rejected in full. Acknowledgement sent to Amazon" if not accepted else
             f"PO confirmed: {len(accepted)} of {len(lines)} lines accepted, "
-            f"{sum(l.qty_confirmed for l in lines):,} units. Acknowledgement sent to Amazon")
+            f"{sum(l.qty_confirmed for l in lines):,} units" + (f" now, {sum(l.qty_backorder for l in lines):,} backordered"
+                                                                if any(l.qty_backorder for l in lines) else "") + ". Acknowledgement sent to Amazon")
     audit("po", po.po_no, text, user, name=name, action="confirm", at=at,
-          after={"lines": [[l.sku.sku_code, l.decision, l.qty_confirmed, l.reason] for l in lines]})
+          after={"lines": [[l.sku.sku_code, l.decision, l.qty_confirmed, l.qty_backorder, l.reason] for l in lines]})
     return lines
 
 
@@ -214,9 +235,10 @@ def confirm_po(user, po_no, version=None):
     if any(l.decision == "accept" and not line_checks(l, cfg)["price_ok"] for l in lines):
         audit("po", po.po_no, "Price check overridden on at least one line (reason recorded)", user,
               action="override")
-    status = {"accept": "Accepted", "partial": "Backordered/partial", "reject": "Rejected"}
-    rows = [["po_no", "asin", "model_no", "qty_ordered", "qty_confirmed", "status", "reason"]] + [
-        [po.po_no, l.asin, l.sku.model_no, l.qty_ordered, l.qty_confirmed, status[l.decision], l.reason] for l in lines]
+    status = {"accept": "Accepted", "partial": "Partially accepted", "backorder": "Backordered", "reject": "Rejected"}
+    rows = [["po_no", "asin", "model_no", "qty_ordered", "qty_confirmed", "qty_backordered", "expected_date", "status", "reason"]] + [
+        [po.po_no, l.asin, l.sku.model_no, l.qty_ordered, l.qty_confirmed, l.qty_backorder,
+         l.backorder_eta.isoformat() if l.qty_backorder and l.backorder_eta else "", status[l.decision], l.reason] for l in lines]
     f = save_file("po_ack", f"PO_ack_{po.po_no}.csv", rows, "po", po.po_no)
     from integrations.connectors import get_adapter
     get_adapter("amazon_vc").push("po_ack", f)
@@ -288,7 +310,57 @@ def hold_po(user, po_no, reason, version=None):
     return po
 
 
-CHANGEABLE = ["new", "confirmed", "booked", "released"]
+CHANGEABLE = ["new", "confirmed", "booked", "released", "backorder"]
+
+
+@transaction.atomic
+def ship_backorder(user, po_no, version=None):
+    """Stock for the backorder has arrived: open the next shipment (a new SAP delivery, ASN, slot and invoice)."""
+    require(user, "ship")
+    po = get_po(po_no, lock=True)
+    check_version(po, version)
+    if po.stage != "backorder":
+        raise CommandError("This PO has no open backorder.")
+    from fulfilment.services import make_delivery, open_qty
+    left = open_qty(po)
+    po.stage = "released"
+    po.bump()
+    po.save()
+    audit("po", po.po_no, f"Backorder released for shipment: {left:,} units", user, action="backorder_ship")
+    if settings.DEMO_SIMULATIONS:
+        make_delivery(po, timezone.now())
+    return po
+
+
+@transaction.atomic
+def close_backorder(user, po_no, reason, version=None):
+    """The rest will not ship (Amazon cancelled it, or stock will not come). The PO closes on what was shipped."""
+    require(user, "confirm")
+    po = get_po(po_no, lock=True)
+    check_version(po, version)
+    if po.stage != "backorder":
+        raise CommandError("This PO has no open backorder.")
+    reason = (reason or "").strip()[:200]
+    if not reason:
+        raise CommandError("Say why the rest will not ship, e.g. Amazon cancelled the backorder.")
+    from fulfilment.services import shipped_qty
+    done = shipped_qty(po)
+    left = 0
+    for l in po_lines(po):
+        extra = l.committed - done.get(l.sku_id, 0)
+        if extra > 0:
+            left += extra
+            bo = min(extra, l.qty_backorder)
+            l.qty_backorder -= bo
+            l.qty_confirmed -= extra - bo
+            l.save()
+    po.stage = "invoiced"
+    po.bump()
+    po.save()
+    audit("po", po.po_no, f"Backorder closed: {left:,} units will not ship. {reason}", user, action="backorder_close", reason=reason)
+    from payments.services import settle_po
+    settle_po(po)
+    return po
 
 
 @transaction.atomic
@@ -312,8 +384,9 @@ def amazon_change(user, po_no, new_qty, cancel=False, reason="", window_end=None
               reason=reason, before={"stage": before}, after={"stage": "cancelled"})
         refresh_open_pos()
         return po, ["PO cancelled"]
-    from fulfilment.services import delivery_of
+    from fulfilment.services import delivery_of, open_qty, shipped_qty
     d = delivery_of(po)
+    done = shipped_qty(po)
     for l in po_lines(po):
         q = new_qty.get(str(l.pk), new_qty.get(l.sku.sku_code))
         if q in (None, ""):
@@ -323,16 +396,21 @@ def amazon_change(user, po_no, new_qty, cancel=False, reason="", window_end=None
             continue
         if q > l.qty_ordered:
             raise CommandError(f"{l.sku.model_no}: Amazon can only reduce a PO line. A higher quantity comes as a new PO.")
+        if q < done.get(l.sku_id, 0):
+            raise CommandError(f"{l.sku.model_no}: {done[l.sku_id]:,} units have already shipped.")
         changes.append([l.sku.sku_code, l.qty_ordered, q])
         l.qty_ordered = q
         if po.stage == "new":
             l.touched = False
         else:
-            if l.qty_confirmed > q:
-                l.qty_confirmed = q
+            if l.committed > q:                       # Amazon wants fewer: cut the backorder first, then what ships now
+                cut = l.committed - q
+                bo = min(cut, l.qty_backorder)
+                l.qty_backorder -= bo
+                l.qty_confirmed -= cut - bo
                 if q == 0:
                     l.decision, l.reason = "reject", "Cancelled by Amazon"
-                else:
+                elif not l.qty_backorder and l.decision == "backorder":
                     l.decision = "accept"
             if d:
                 dl = d.lines.filter(sku=l.sku).first()
@@ -349,6 +427,8 @@ def amazon_change(user, po_no, new_qty, cancel=False, reason="", window_end=None
         refresh_suggestions(po)
     if all(l.qty_ordered == 0 for l in po_lines(po)):
         po.stage = "cancelled"
+    elif po.stage == "backorder" and not open_qty(po):
+        po.stage = "invoiced"                # nothing left to ship
     po.bump()
     po.save()
     text = "; ".join(f"{s} {a:,} → {b:,}" for s, a, b in changes)
@@ -359,6 +439,9 @@ def amazon_change(user, po_no, new_qty, cancel=False, reason="", window_end=None
     if po.stage != "new" and changes:
         notify(f"Amazon changed PO {po.po_no} after confirmation: {text}", "warn", ("po", po.po_no, "lines"))
     refresh_open_pos()
+    if po.stage == "invoiced":
+        from payments.services import settle_po
+        settle_po(po)
     return po, changes
 
 

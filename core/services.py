@@ -82,7 +82,7 @@ def audit(entity, entity_id, text, user=None, *, action="", system=False, name=N
 # Who an alert is for, from what it links to: (record type, tab) → roles. Admins and managers see everything.
 ALERT_ROLES = {("po", "lines"): ["PIC"], ("po", "shipment"): ["Logistics", "PIC"], ("po", "invoice"): ["Finance", "PIC"],
                ("po", ""): ["PIC"], ("promo", "claim"): ["Product", "Finance"], ("promo", "dn"): ["PIC", "Finance"],
-               ("promo", ""): ["Product", "PIC"], ("dn", ""): ["PIC", "Finance"], ("dispute", ""): ["Finance", "PIC"]}
+               ("promo", ""): ["Product", "PIC"], ("dn", ""): ["PIC", "Finance"], ("dispute", ""): ["Finance", "PIC"], ("rtv", ""): ["PIC", "Finance", "Logistics"]}
 
 
 def notify(text, tone="info", link=None, at=None, roles=None, user=None):
@@ -153,7 +153,7 @@ def assign(user, entity, key, to_username):
 
 
 AUDIT_ENTITY = {"promo": "promotion"}
-LABEL = {"po": "PO", "promo": "promotion", "dispute": "dispute", "dn": "debit note"}
+LABEL = {"po": "PO", "promo": "promotion", "dispute": "dispute", "dn": "debit note", "rtv": "return"}
 
 
 def timeline(entity, *ids):

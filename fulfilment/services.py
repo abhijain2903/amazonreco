@@ -14,16 +14,44 @@ from rules.services import get_cfg
 from .models import SapDelivery, Shipment
 
 
+def shipped_qty(po):
+    """Units already sent on ASNs, per SKU."""
+    from django.db.models import Sum
+    from .models import ShipmentLine
+    return dict(ShipmentLine.objects.filter(shipment__po=po).values_list("sku_id").annotate(n=Sum("qty")))
+
+
+def to_ship(po):
+    """What the next delivery should carry, per PO line: the first one ships what was confirmed now; later ones ship
+    what is still open (backorders and anything a short delivery left behind)."""
+    done = shipped_qty(po)
+    first = not po.shipments.exists()
+    out = []
+    for l in po.lines.select_related("sku"):
+        q = l.qty_confirmed if first else max(0, l.committed - done.get(l.sku_id, 0))
+        if q > 0:
+            out.append((l, q))
+    return out
+
+
+def open_qty(po):
+    """Units still to ship on the PO (backorders and short deliveries)."""
+    done = shipped_qty(po)
+    return sum(max(0, l.committed - done.get(l.sku_id, 0)) for l in po.lines.all())
+
+
 def make_delivery(po, at, short=0, delivery_no=None, ship_date=None):
-    """Record the SAP outbound delivery for a released PO (SAP sync or simulation)."""
-    lines = [l for l in po.lines.select_related("sku") if l.qty_confirmed > 0]
-    d = SapDelivery.objects.create(po=po, delivery_no=delivery_no or str(next_number("sap_delivery", 8000331100)),
-                                   cartons=max(1, math.ceil(sum(l.qty_confirmed for l in lines) / 8)),
+    """Record the SAP outbound delivery for a released PO (SAP sync or simulation). A PO can have several:
+    stock arriving in batches, or a backorder shipped later."""
+    lines = to_ship(po)
+    seq = po.sap_deliveries.count() + 1
+    d = SapDelivery.objects.create(po=po, seq=seq, delivery_no=delivery_no or str(next_number("sap_delivery", 8000331100)),
+                                   cartons=max(1, math.ceil(sum(q for _, q in lines) / 8)),
                                    ship_date=ship_date or at + timedelta(days=2))
-    for i, l in enumerate(lines):
-        d.lines.create(sku=l.sku, qty=max(1, l.qty_confirmed - short) if (short and i == 0) else l.qty_confirmed)
-    audit("po", po.po_no, f"SAP delivery {d.delivery_no} received ({d.cartons} cartons)", name="SAP sync",
-          system=True, action="delivery", at=at)
+    for i, (l, q) in enumerate(lines):
+        d.lines.create(sku=l.sku, qty=max(1, q - short) if (short and i == 0) else q)
+    audit("po", po.po_no, f"SAP delivery {d.delivery_no}{f' (delivery {seq})' if seq > 1 else ''} received ({d.cartons} cartons)",
+          name="SAP sync", system=True, action="delivery", at=at)
     return d
 
 
@@ -32,7 +60,7 @@ def asn_checks(po, cfg=None):
     d = delivery_of(po)
     if not d:
         return []
-    confirmed = {l.sku_id: l.qty_confirmed for l in po.lines.all()}
+    confirmed = {l.sku_id: q for l, q in to_ship(po)}      # what this shipment should carry
     out = []
     for dl in d.lines.select_related("sku"):
         asn = dl.asn_qty if dl.asn_qty is not None else dl.qty
@@ -43,17 +71,16 @@ def asn_checks(po, cfg=None):
 
 
 def delivery_of(po):
-    try:
-        return po.sap_delivery
-    except SapDelivery.DoesNotExist:
+    """The SAP delivery being worked on: the latest one, unless it has already gone out on an ASN and the PO is
+    waiting for the next delivery (backorder)."""
+    d = po.sap_delivery
+    if d and po.stage == "released" and po.shipments.filter(seq=d.seq).exists():
         return None
+    return d
 
 
 def shipment_of(po):
-    try:
-        return po.shipment
-    except Shipment.DoesNotExist:
-        return None
+    return po.shipment
 
 
 def slot_at_risk(po, cfg=None):
@@ -67,6 +94,8 @@ def sync_delivery(user, po_no):
     po = get_po(po_no, lock=True)
     if po.stage != "released" or delivery_of(po):
         raise CommandError("This order already has a delivery or is not released.")
+    if not to_ship(po):
+        raise CommandError("Nothing left to ship on this PO.")
     if not settings.DEMO_SIMULATIONS:
         raise CommandError("SAP is in file mode. Upload the SAP deliveries file (U5).")
     return make_delivery(po, timezone.now())
@@ -120,7 +149,7 @@ def build_cartons(sh):
 
 def _submit_asn(po, at, user=None, name=None):
     d = delivery_of(po)
-    sh = Shipment.objects.create(po=po, asn_no=f"ASN{next_number('asn', 7104400)}", sap_delivery_no=d.delivery_no,
+    sh = Shipment.objects.create(po=po, seq=d.seq, asn_no=f"ASN{next_number('asn', 7104400)}", sap_delivery_no=d.delivery_no,
                                  cartons=d.cartons, ship_date=d.ship_date, submitted_at=at)
     total = 0
     for dl in d.lines.select_related("sku"):
@@ -228,10 +257,14 @@ def slot_failed(user, po_no, outcome, reason, version=None):
 
 
 def _deliver(po, at, user=None, name=None, bill_mismatch=False):
+    sh = shipment_of(po)
+    sh.delivered_at = at
+    sh.save(update_fields=["delivered_at", "updated_at"])
     po.stage, po.delivered_at = "delivered", at
     po.bump()
     po.save()
-    audit("po", po.po_no, f"Delivered to {po.fc.code}", user, name=name, action="deliver", at=at)
+    audit("po", po.po_no, f"Delivered to {po.fc.code}" + (f" (shipment {sh.seq}, ASN {sh.asn_no})" if sh.seq > 1 else ""), user,
+          name=name, action="deliver", at=at)
     from billing.services import make_billing
     make_billing(po, at + timedelta(hours=1), mismatch=bill_mismatch)
 

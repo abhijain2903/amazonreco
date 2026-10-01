@@ -10,7 +10,7 @@ from rules.services import get_cfg
 from .services import asn_checks, delivery_of, slot_at_risk
 
 TABS = [("asn", "ASN to create", ["released"]), ("slot", "Slot to book", ["asn"]), ("transit", "In transit", ["slot"]),
-        ("invoice", "Invoice to submit", ["delivered"]), ("submitted", "Submitted", ["invoiced", "paid"])]
+        ("invoice", "Invoice to submit", ["delivered"]), ("backorder", "Backorders", ["backorder"]), ("submitted", "Submitted", ["invoiced", "paid"])]
 
 
 def ship_list(request):
@@ -29,6 +29,10 @@ def ship_list(request):
         elif tab == "invoice":
             r.update(b=p.sap_billing, blocked=invoice_blocked(p, cfg))
             r["net"] = sum(sl.qty * next(l.cost_h for l in p.lines.all() if l.sku_id == sl.sku_id) for sl in p.shipment.lines.all())
+        elif tab == "backorder":
+            from .services import open_qty
+            r.update(left=open_qty(p), inv=p.invoice, n_ship=p.shipments.count(),
+                     eta=min((l.backorder_eta for l in p.lines.all() if l.qty_backorder and l.backorder_eta), default=None))
         else:
             r.update(inv=p.invoice)
         rows.append(r)

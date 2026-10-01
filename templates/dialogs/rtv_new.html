@@ -1,0 +1,17 @@
+{% extends "dialogs/_modal.html" %}
+{% block label %}New return{% endblock %}
+{% block mtitle %}Amazon return request{% endblock %}{% block msub %}<p>Enter the return as Amazon sent it. Cost defaults to the agreed price on the request date.</p>{% endblock %}
+{% block form_open %}<form hx-post="/returns/new/" hx-swap="none">{% endblock %}
+{% block mbody %}
+<div class="fgrid"><div class="field"><label for="rn-no">Amazon return #</label><input class="inp" id="rn-no" name="rtv_no" required placeholder="e.g. RTV-118842"></div>
+<div class="field"><label for="rn-date">Requested on</label><input class="inp" type="date" id="rn-date" name="date" value="{{ today }}"></div>
+<div class="field"><label for="rn-r">Reason</label><select class="sel" id="rn-r" name="reason">{% for k, v in reasons %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></div>
+<div class="field"><label for="rn-fc">From FC</label><select class="sel" id="rn-fc" name="fc"><option value="">—</option>{% for f in fcs %}<option value="{{ f.code }}">{{ f.code }}</option>{% endfor %}</select></div>
+{% if vcodes %}<div class="field"><label for="rn-vc">Vendor code</label><select class="sel" id="rn-vc" name="vendor_code"><option value="">—</option>{% for v in vcodes %}<option>{{ v.code }}</option>{% endfor %}</select></div>{% endif %}</div>
+<div class="tw"><table class="dt compact"><thead><tr><th>Model</th><th class="num">Units</th><th class="num">Cost SAR (optional)</th></tr></thead><tbody>
+{% for i in rows %}<tr><td><select class="sel sm" name="sku-{{ i }}" aria-label="Model {{ i|add:1 }}"><option value="">—</option>{% for s in skus %}<option value="{{ s.sku_code }}">{{ s.model_no }}</option>{% endfor %}</select></td>
+<td class="num"><input class="inp sm qty" type="number" min="0" name="qty-{{ i }}" aria-label="Units"></td><td class="num"><input class="inp sm qty" type="number" step="0.01" min="0" name="cost-{{ i }}" aria-label="Cost"></td></tr>{% endfor %}</tbody></table></div>
+<div class="field"><label for="rn-note">Note</label><input class="inp" id="rn-note" name="note" placeholder="Anything from Amazon's request"></div>
+{% endblock %}
+{% block mfoot %}<span class="hint"></span><button type="button" class="btn" data-close="modal">Cancel</button><button class="btn pri" type="submit" {% perm 'upload' %}>Add return</button>{% endblock %}
+{% block form_close %}</form>{% endblock %}

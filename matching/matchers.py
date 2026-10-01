@@ -26,7 +26,7 @@ def _open_invoices():
     paid = dict(Payment.objects.filter(status__in=COUNTED, invoice__isnull=False).values("invoice").annotate(s=Sum("paid_h"))
                 .values_list("invoice", "s"))
     out = []
-    for inv in Invoice.objects.filter(po__stage="invoiced").select_related("po"):
+    for inv in Invoice.objects.exclude(po__stage__in=["paid", "rejected", "cancelled"]).select_related("po"):
         due = inv.total_h - (paid.get(inv.pk) or 0)
         if due > 0:
             inv.due_h = due

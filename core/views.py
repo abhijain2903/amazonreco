@@ -40,7 +40,7 @@ def dashboard(request):
     to_conf = [p for p in pos if p.stage == "new"]
     overdue = [p for p in to_conf if p.confirm_by < now]
     open_po = [p for p in pos if p.stage not in ("paid", "rejected", "cancelled")]
-    unpaid = Invoice.objects.filter(po__stage="invoiced")
+    unpaid = Invoice.objects.exclude(po__stage__in=["paid", "rejected", "cancelled"]).exclude(payments__status__in=["matched", "accepted", "recovered"])
     disp = Dispute.objects.filter(status__in=["open", "submitted"])
     promos = list(Promotion.objects.prefetch_related("lines"))
     pstage = {p.pk: stage_of(p) for p in promos}
@@ -228,7 +228,7 @@ def search(request):
     if q:
         ql = q.lower()
         for p in PurchaseOrder.objects.filter(Q(po_no__icontains=q) | Q(sap_order_no__icontains=q) | Q(sf_order_id__icontains=q) |
-                                               Q(sap_delivery__delivery_no__icontains=q) | Q(shipment__asn_no__icontains=q) | Q(invoice__invoice_no__icontains=q)).distinct()[:8]:
+                                               Q(sap_deliveries__delivery_no__icontains=q) | Q(shipments__asn_no__icontains=q) | Q(invoices__invoice_no__icontains=q)).distinct()[:8]:
             add("Purchase orders", f"PO {p.po_no}", STAGE_LABELS.get(p.stage, p.stage), _record_url("po", p.po_no), "po")
         for p in Payment.objects.filter(payment_no__icontains=q)[:5]:
             add("Payments", p.payment_no, f"SAR {round(p.paid_h / 100):,} · {p.get_status_display()}", _record_url("payment", p.payment_no), "wallet")
@@ -253,8 +253,9 @@ def record(request, kind, key):
     from orders.views import drawer as po_drawer
     from payments.views import dispute_drawer, payment_drawer
     from promotions.views import drawer as promo_drawer
+    from returns.views import drawer as rtv_drawer
     views = {"po": po_drawer, "promo": promo_drawer, "dn": dn_drawer, "payment": payment_drawer, "dispute": dispute_drawer,
-             "sku": sku_drawer, "conn": conn_drawer}
+             "sku": sku_drawer, "conn": conn_drawer, "rtv": rtv_drawer}
     if kind not in views:
         raise Http404
     if not htmx.is_htmx(request):
@@ -265,7 +266,7 @@ def record(request, kind, key):
 
 
 RECORD_PAGES = {"po": "/pos/?tab=all", "promo": "/promos/", "dn": "/dns/", "payment": "/pay/", "dispute": "/pay/?tab=disputes",
-                "sku": "/pos/?tab=all", "conn": "/integrations/"}
+                "sku": "/pos/?tab=all", "conn": "/integrations/", "rtv": "/returns/?tab=all"}
 
 
 def sku_drawer(request, key):
@@ -299,7 +300,7 @@ def add_note(request, entity, key):
 @require_POST
 def assign(request, entity, key):
     from .services import assign as do_assign
-    if entity not in ("po", "promo", "dispute", "dn"):
+    if entity not in ("po", "promo", "dispute", "dn", "rtv"):
         raise Http404
     to = do_assign(request.user, entity, key, request.POST.get("user", ""))
     return htmx.done(request, f"Assigned to {to.name}" if to else "Back with the role", refresh=False)

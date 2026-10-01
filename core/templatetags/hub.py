@@ -253,3 +253,14 @@ def catcolor(code):
 def catname(code):
     from catalog.models import CATEGORY_NAMES
     return CATEGORY_NAMES.get(code, code)
+
+
+@register.filter
+def sum_paid(payments):
+    """What came in on an invoice: payments that count (not unmatched)."""
+    return sum(p.paid_h for p in payments if p.status != "unmatched")
+
+
+@register.filter
+def sum_qty(lines):
+    return sum(l.qty for l in lines)

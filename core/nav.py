@@ -10,7 +10,7 @@ NAV = [
     ("Overview", [("dashboard", "/", "Dashboard", "home"), ("action", "/action/", "Action Center", "inbox"),
                   ("reports", "/reports/", "Reports", "chart")]),
     ("Sell-in", [("pos", "/pos/", "Purchase Orders", "po"), ("ship", "/ship/", "Shipments & Invoices", "truck"),
-                 ("pay", "/pay/", "Payments & Disputes", "wallet")]),
+                 ("pay", "/pay/", "Payments & Disputes", "wallet"), ("returns", "/returns/", "Returns (RTV)", "box")]),
     ("Sell-out", [("promos", "/promos/", "Promotions", "tag"), ("dns", "/dns/", "Debit Notes", "receipt"),
                   ("claims", "/claims/", "Claims & Credit Notes", "claim")]),
     ("Data", [("uploads", "/uploads/", "Uploads", "upload"), ("integrations", "/integrations/", "Integrations", "plug")]),
@@ -34,6 +34,11 @@ def section_for(path):
     return "dashboard"
 
 
+def _rtv_open():
+    from returns.models import ReturnAuth
+    return ReturnAuth.objects.filter(status__in=["requested", "received"]).count()
+
+
 def badges(user):
     mine = action_items(user, mine=True)
     dns = [evaluate(d)["status"] for d in DebitNote.objects.filter(validated=False).prefetch_related("lines__sku")]
@@ -44,6 +49,7 @@ def badges(user):
         "pos": (new.count(), new.filter(confirm_by__lt=timezone.now()).exists()),
         "pay": (Payment.objects.filter(status__in=["short", "unmatched"]).count(), Payment.objects.filter(status="short").exists()),
         "dns": (sum(s in ("to_validate", "mismatch", "unlinked") for s in dns), "mismatch" in dns),
+        "returns": (_rtv_open(), False),
     }
 
 

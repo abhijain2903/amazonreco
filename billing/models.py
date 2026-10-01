@@ -6,7 +6,9 @@ from orders.models import PurchaseOrder
 
 
 class SapBilling(Base):
-    po = models.OneToOneField(PurchaseOrder, on_delete=models.CASCADE, related_name="sap_billing")
+    po = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, related_name="sap_billings")
+    seq = models.PositiveIntegerField(default=1)
+    shipment = models.ForeignKey("fulfilment.Shipment", null=True, blank=True, on_delete=models.SET_NULL, related_name="billings")
     billing_no = models.CharField(max_length=20)
     received_at = models.DateTimeField()
 
@@ -24,7 +26,9 @@ class SapBillingLine(Base):
 class Invoice(Base):
     """Invoice sent to Amazon. SAP stays the legal tax invoice of record (ZATCA)."""
 
-    po = models.OneToOneField(PurchaseOrder, on_delete=models.CASCADE, related_name="invoice")
+    po = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, related_name="invoices")
+    seq = models.PositiveIntegerField(default=1, help_text="Invoice per shipment: 1st, 2nd …")
+    shipment = models.ForeignKey("fulfilment.Shipment", null=True, blank=True, on_delete=models.SET_NULL, related_name="invoices")
     invoice_no = models.CharField(max_length=30, unique=True)
     invoice_date = models.DateTimeField()
     net_h = models.BigIntegerField()

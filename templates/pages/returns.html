@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="ph"><div><h1>Returns (RTV)</h1><p>Stock Amazon sends back. Authorise it, count what arrives, and make sure Amazon deducts only for what came back.</p></div>
+<div class="ph-act">{% include "partials/export_btn.html" %}<button class="btn" hx-get="/uploads/new/?type=U10" hx-target="#modal" {% perm 'upload' %}>{% icon 'upload' %}<span>Upload returns</span></button>
+<button class="btn pri" hx-get="/returns/new/" hx-target="#modal" {% perm 'upload' %}>{% icon 'plus' %}<span>New return</span></button></div></div>
+<div class="kpis">{% for k in kpis %}<a class="kpi {% if k.alert %}alert{% endif %}" href="{{ k.url }}"><span class="kpi-l">{{ k.l }}</span><span class="kpi-v">{{ k.v }}</span><span class="kpi-s">{{ k.s }}</span></a>{% endfor %}</div>
+<div class="tabs" role="tablist">{% for t in tabs %}<a class="tab {% if t.id == tab %}on{% endif %}" href="?tab={{ t.id }}">{{ t.label }}<span class="ct">{{ t.count }}</span></a>{% endfor %}</div>
+{% if rows %}<div class="tw"><table class="dt"><thead><tr><th>Return</th><th>From</th><th>Reason</th><th>Requested</th><th class="num">Units</th><th class="num">Value SAR</th><th class="num">Received SAR</th><th>Status</th></tr></thead><tbody>
+{% for r in rows %}<tr class="click" hx-get="/records/rtv/{{ r.rtv_no }}/" hx-target="#drawer"><td><b class="mono">{{ r.rtv_no }}</b></td><td>{{ r.fc.code|default:"—" }}</td><td>{{ r.get_reason_display }}</td><td>{{ r.requested_at|fd }}</td><td class="num">{{ r.lines.all|sum_qty|num }}</td><td class="num">{{ r.amount_h|n }}</td><td class="num">{% if r.received_at %}{{ r.received_h|n }}{% else %}—{% endif %}</td>
+<td>{% if r.status == 'requested' %}{% chip "To authorise" "warn" %}{% elif r.status == 'authorised' %}{% chip "On its way" "info" %}{% elif r.status == 'received' %}{% chip "To match" "info" %}{% elif r.status == 'credited' %}{% chip "Credited" "ok" %}{% elif r.status == 'disputed' %}{% chip "Disputed" "bad" %}{% else %}{% chip "Refused" %}{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}<div class="tw"><div class="empty"><div class="ei">{% icon 'box' %}</div><b>Nothing here</b><span>Amazon return requests come from Vendor Central (upload U10) or are entered by hand.</span></div></div>{% endif %}
+{% endblock %}
