@@ -34,7 +34,58 @@ from .services import CommandError, peek_number, require
 
 
 # ---------- dashboard ----------
+DASH_VIEWS = [("overview", "Overview"), ("po", "PO tracker"), ("sellout", "Sell-out tracker"), ("claims", "Claim tracker")]
+
+
+def trackers(request, view):
+    """ME's trackers on the dashboard: same columns and order as the team's Excel sheets; export gives that sheet."""
+    from catalog.models import CATEGORY_NAMES, FulfilmentCentre, Sku
+
+    from . import trackers as T
+    from .exports import wants_export, xlsx
+    from .models import VendorCode
+    g = request.GET
+    f = dict(vc=g.get("vc", ""), cat=g.get("cat", "") if g.get("cat", "") in CATEGORY_NAMES else "")
+    meta, me_cols = {}, None
+    if view == "po":
+        f.update(status=htmx.pick(request, "status", ["open", "invoiced", "all"], "open"), fc=g.get("fc", ""), q=g.get("q", "").strip())
+        cols, rows = T.po_tracker(**f)
+        me_cols, name = T.PO_ME, "PO_tracker"
+    elif view == "sellout":
+        ys = g.get("year", "")
+        year = int(ys) if ys.isdigit() and 2000 < int(ys) < 2100 else timezone.localdate().year
+        f.update(year=year, status=g.get("status", "") if g.get("status", "") in dict(Sku._meta.get_field("lifecycle").choices) else "")
+        f.pop("vc")
+        cols, rows, meta = T.sellout_tracker(**f)
+        me_cols, name = len(cols) - 2, "Sellout_tracker"
+    else:
+        f.update(status=htmx.pick(request, "status", ["all", "pending", "submitted"], "all"))
+        cols, rows = T.claim_tracker(status=f["status"] if f["status"] != "all" else "", vc=f["vc"], cat=f["cat"])
+        me_cols, name = T.CLAIM_ME, "Claim_tracker"
+    if wants_export(request):
+        headers, data = T.excel(cols[:me_cols], [dict(cells=r["cells"][:me_cols]) for r in rows])
+        return xlsx(name, headers, data)
+    return render(request, "pages/trackers.html", dict(view=view, views=DASH_VIEWS, cols=cols, rows=rows, me_cols=me_cols, f=f, meta=meta,
+                  vcodes=VendorCode.objects.all(), fcs=FulfilmentCentre.objects.all(), cats=list(CATEGORY_NAMES.items()),
+                  lifecycles=Sku._meta.get_field("lifecycle").choices, years=list(range(timezone.localdate().year, timezone.localdate().year - 3, -1)),
+                  totals=_tracker_totals(view, cols, rows)))
+
+
+def _tracker_totals(view, cols, rows):
+    """Sum of the quantity / money columns, shown in the table footer."""
+    out = []
+    for i, (_, k) in enumerate(cols):
+        if k in ("int", "sar", "sar2") and not (view == "sellout" and i in (4, 5)) and not (view == "po" and i == 6):
+            out.append(sum(r["cells"][i] or 0 for r in rows if isinstance(r["cells"][i], int)))
+        else:
+            out.append(None)
+    return out
+
+
 def dashboard(request):
+    view = htmx.pick(request, "view", [k for k, _ in DASH_VIEWS], "overview")
+    if view != "overview":
+        return trackers(request, view)
     now = timezone.now()
     pos = list(PurchaseOrder.objects.prefetch_related("lines"))
     to_conf = [p for p in pos if p.stage == "new"]
@@ -83,7 +134,7 @@ def dashboard(request):
     hours = round((retypes * 3 + checked * 1.5 + dnv * 25) / 60)
     first = request.user.name.split()[0]
     greeting = "morning" if timezone.localtime(now).hour < 12 else "afternoon"
-    return render(request, "pages/dashboard.html", dict(kpis=kpis, pipe_in=pipe_in, pipe_out=pipe_out, n_pos=len(pos), n_promos=len(promos),
+    return render(request, "pages/dashboard.html", dict(views=DASH_VIEWS, kpis=kpis, pipe_in=pipe_in, pipe_out=pipe_out, n_pos=len(pos), n_promos=len(promos),
                   chart=chart, cats=[dict(c=c, n=n, w=n / cmax * 100) for c, n in cc], auto=dict(checked=checked, retypes=retypes, dnv=dnv, hours=hours),
                   items=action_items(request.user)[:5], greeting=f"Good {greeting}, {first}", today=now))
 

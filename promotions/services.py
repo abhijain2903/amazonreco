@@ -47,7 +47,7 @@ def new_ref():
 
 
 def create_promotion(user, name, category, start, end, owner, lines, *, source="the hub", at=None, name_override=None,
-                     promo_type="price_discount", vendor_code=""):
+                     promo_type="price_discount", vendor_code="", refs=None):
     """lines: [(sku, support_h, expected_units)]."""
     if not name.strip():
         raise CommandError("Give the promotion a name.")
@@ -57,7 +57,10 @@ def create_promotion(user, name, category, start, end, owner, lines, *, source="
         raise CommandError("Add at least one model.")
     if any(s <= 0 or u <= 0 for _, s, u in lines):
         raise CommandError("Every model needs support per unit and expected units above 0.")
-    p = Promotion.objects.create(mecl_ref=new_ref(), name=name.strip(), category=category, promo_type=promo_type or "price_discount", vendor_code=vendor_code or "", start=start, end=end,
+    p = Promotion.objects.create(mecl_ref=new_ref(), name=name.strip(), category=category, promo_type=promo_type or "price_discount", vendor_code=vendor_code or "",
+                                 **{k: (v or "")[:f] for (k, f), v in zip((("sf_ref", 30), ("brand_ref", 40), ("subcat", 12)),
+                                                                         [(refs or {}).get(k) for k in ("sf_ref", "brand_ref", "subcat")])},
+                                 start=start, end=end,
                                  dn_due=end + timedelta(days=30), owner_name=owner, stage="draft")
     for sku, s, u in lines:
         p.lines.create(sku=sku, support_h=s, expected_units=u)
@@ -134,16 +137,42 @@ def reject_promotion(user, ref, version=None):
 
 @transaction.atomic
 def pull_sold_units(user, ref):
-    """Simulated pull from the Amazon sales report."""
+    """Units sold during the promotion, from the Amazon sell-out loaded with U11 (sales report). Falls back to a
+    simulation in demo mode when there is no sell-out for the promotion dates."""
+    from django.db.models import Sum
+
+    from catalog.models import SellOut
     require(user, "promo")
     p = get_promo(ref, lock=True)
+    a, b = timezone.localtime(p.start).date(), timezone.localtime(p.end).date()
+    lines = list(p.lines.filter(sold_units__isnull=True))
+    real = dict(SellOut.objects.filter(sku__in=[l.sku_id for l in lines], day__gte=a, day__lte=b)
+                .values_list("sku_id").annotate(n=Sum("units")))
+    if real:
+        for l in lines:
+            l.sold_units = max(0, real.get(l.sku_id, 0))
+            l.save()
+        audit("promotion", ref, f"Sold units taken from the Amazon sales report for {a:%d %b} – {b:%d %b}", user, action="sold_units")
+        return
     if not settings.DEMO_SIMULATIONS:
-        raise CommandError("The Amazon sales report connector is not live yet.")
+        raise CommandError("No Amazon sell-out loaded for the promotion dates yet. Upload the sales report (U11).")
     rnd = random.Random(p.mecl_ref)
-    for l in p.lines.filter(sold_units__isnull=True):
+    for l in lines:
         l.sold_units = round(l.expected_units * (0.85 + rnd.random() * 0.3))
         l.save()
     audit("promotion", ref, "Sold units pulled from the Amazon sales report (simulated)", user, action="sold_units")
+
+
+@transaction.atomic
+def set_references(user, ref, sf_ref, brand_ref, subcat):
+    """ME's own references on a promotion: MECL ref from Salesforce, the second reference and the sub-category code."""
+    require(user, "promo")
+    p = get_promo(ref, lock=True)
+    p.sf_ref, p.brand_ref, p.subcat = (sf_ref or "").strip()[:30], (brand_ref or "").strip()[:40], (subcat or "").strip().upper()[:12]
+    p.bump()
+    p.save()
+    audit("promotion", ref, f"References: MECL {p.sf_ref or '—'} · {p.brand_ref or '—'} · {p.subcat or '—'}", user, action="references")
+    return p
 
 
 @transaction.atomic

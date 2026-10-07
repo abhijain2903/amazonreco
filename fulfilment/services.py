@@ -40,12 +40,15 @@ def open_qty(po):
     return sum(max(0, l.committed - done.get(l.sku_id, 0)) for l in po.lines.all())
 
 
-def make_delivery(po, at, short=0, delivery_no=None, ship_date=None):
+def make_delivery(po, at, short=0, delivery_no=None, ship_date=None, sales_order=""):
     """Record the SAP outbound delivery for a released PO (SAP sync or simulation). A PO can have several:
     stock arriving in batches, or a backorder shipped later."""
     lines = to_ship(po)
     seq = po.sap_deliveries.count() + 1
-    d = SapDelivery.objects.create(po=po, seq=seq, delivery_no=delivery_no or str(next_number("sap_delivery", 8000331100)),
+    # Each booking portion has its own sales order: the first is the PO's; later ones are booked separately
+    if not sales_order:
+        sales_order = po.sap_order_no if seq == 1 else (str(next_number("sap_order", 4500018420)) if settings.DEMO_SIMULATIONS else "")
+    d = SapDelivery.objects.create(po=po, seq=seq, sales_order=sales_order, delivery_no=delivery_no or str(next_number("sap_delivery", 8000331100)),
                                    cartons=max(1, math.ceil(sum(q for _, q in lines) / 8)),
                                    ship_date=ship_date or at + timedelta(days=2))
     for i, (l, q) in enumerate(lines):
@@ -149,7 +152,7 @@ def build_cartons(sh):
 
 def _submit_asn(po, at, user=None, name=None):
     d = delivery_of(po)
-    sh = Shipment.objects.create(po=po, seq=d.seq, asn_no=f"ASN{next_number('asn', 7104400)}", sap_delivery_no=d.delivery_no,
+    sh = Shipment.objects.create(po=po, seq=d.seq, sales_order=d.sales_order, asn_no=f"ASN{next_number('asn', 7104400)}", sap_delivery_no=d.delivery_no,
                                  cartons=d.cartons, ship_date=d.ship_date, submitted_at=at)
     total = 0
     for dl in d.lines.select_related("sku"):

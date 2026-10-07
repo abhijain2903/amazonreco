@@ -33,6 +33,8 @@ class Sku(Base):
     cost_h = models.BigIntegerField(default=0, help_text="Current agreed Amazon cost, halalas")
     free_stock = models.IntegerField(default=0)
     stock_as_of = models.DateTimeField(default=timezone.now)
+    rrp_h = models.BigIntegerField(null=True, blank=True, help_text="Recommended retail price incl. VAT, halalas")
+    lifecycle = models.CharField(max_length=10, default="active", choices=[("new", "New"), ("active", "Active"), ("phase_out", "Phase-out"), ("eol", "EOL")])
     case_pack = models.PositiveIntegerField(default=1, help_text="Units per case; PO quantities should be whole cases")
     active = models.BooleanField(default=True)
 
@@ -71,3 +73,38 @@ def resolve_sku(value):
     v = str(value).strip()
     return (Sku.objects.filter(sku_code=v).first() or Sku.objects.filter(asin=v.upper()).first()
             or Sku.objects.filter(model_no__iexact=v).first())
+
+
+class SellOut(models.Model):
+    """Units Amazon sold to customers, net of returns (Vendor Central sales report). One row per SKU and day — a
+    weekly or monthly file is stored on its last day."""
+
+    sku = models.ForeignKey(Sku, on_delete=models.CASCADE, related_name="sellout")
+    day = models.DateField(db_index=True)
+    units = models.IntegerField()
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["sku", "day"], name="uniq_sellout_day")]
+
+
+class AmazonStock(models.Model):
+    """Amazon's stock on hand for a SKU on a date (Vendor Central inventory report)."""
+
+    sku = models.ForeignKey(Sku, on_delete=models.CASCADE, related_name="amazon_stock")
+    as_of = models.DateField(db_index=True)
+    units = models.IntegerField()
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["sku", "as_of"], name="uniq_amazon_stock")]
+
+
+class Forecast(models.Model):
+    """Amazon's forecast for a SKU and month (Vendor Central forecasting report)."""
+
+    sku = models.ForeignKey(Sku, on_delete=models.CASCADE, related_name="forecasts")
+    month = models.DateField(help_text="First day of the month")
+    sellout_units = models.IntegerField()
+    sellin_units = models.IntegerField(null=True, blank=True, help_text="Empty: the tracker estimates it")
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["sku", "month"], name="uniq_forecast_month")]

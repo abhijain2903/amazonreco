@@ -28,6 +28,7 @@ class PurchaseOrder(Base):
     delivered_at = models.DateTimeField(null=True, blank=True)
     paid_at = models.DateTimeField(null=True, blank=True)
     vendor_code = models.CharField(max_length=12, blank=True, db_index=True, help_text="Amazon vendor code the PO was sent to")
+    rfpo = models.CharField(max_length=30, blank=True, help_text="ME's release / booking reference (RFPO)")
     sap_order_no = models.CharField(max_length=20, blank=True)
     sf_order_id = models.CharField(max_length=20, blank=True)
 

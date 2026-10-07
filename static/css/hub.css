@@ -480,3 +480,6 @@ tr.sel td{background:var(--primary-soft)}
 .bc i{position:absolute;bottom:-17px;left:0;font-size:10px;color:var(--faint);font-style:normal;white-space:nowrap}
 .trend .card-b{padding-bottom:22px}
 aside.drawer.reloading .df button,aside.drawer.reloading .df .btn{pointer-events:none;opacity:.55}
+.trk{max-height:calc(100vh - 290px);overflow:auto}.trk thead th{position:sticky;top:0;z-index:1;background:var(--surface);white-space:nowrap}
+.trk td{white-space:nowrap}.trk th.hubcol,.trk td.hubcol{background:var(--gray-soft)}.trk tr.f-bad td:first-child{box-shadow:inset 3px 0 var(--bad)}
+.trk tr.f-warn td:first-child{box-shadow:inset 3px 0 var(--warn)}.trk tr.openrow td{color:var(--muted)}.trk tfoot td{position:sticky;bottom:0;background:var(--surface);font-weight:600}

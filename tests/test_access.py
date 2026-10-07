@@ -81,6 +81,8 @@ ACTIONS = {
     "rtv.receive": ("ship", lambda: f"/returns/{rtv('authorised')}/receive/", {}),
     "rtv.link": ("dispute", lambda: f"/returns/{rtv('received')}/link/", {"payment_no": "x"}),
     "rtv.new": ("upload", lambda: "/returns/new/", {"rtv_no": "RTV-X", "sku-0": "x", "qty-0": "1"}),
+    "po.references": ("book", lambda: f"/pos/{po('booked')}/references/", {"rfpo": "RFPO-1"}),
+    "promo.references": ("promo", lambda: f"/promos/{promo('live')}/references/", {"sf_ref": "PRO-1"}),
     "po.credit_memo": ("invoice", lambda: f"/pos/{po('invoiced')}/credit-memo/", {"amount": "1", "reason": "x"}),
     "po.sync_delivery": ("ship", lambda: f"/pos/{po('released', lambda p: not delivery_of(p))}/sync-delivery/", {}),
     "po.asn": ("ship", lambda: f"/pos/{po('released', delivery_of)}/asn/", {}),

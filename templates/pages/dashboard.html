@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="ph"><div><h1>{{ greeting }}</h1><p>Amazon sell-in and sell-out at a glance · {{ today|fdy }}</p></div><div class="ph-act"><a class="btn" href="/action/">{% icon 'inbox' %}<span>Open Action Center</span></a></div></div>
+{% include "partials/dash_tabs.html" with views=views view="overview" %}
 <div class="kpis k7">{% for k in kpis %}<a class="kpi {% if k.alert %}alert{% endif %}" href="{{ k.url }}"><span class="kpi-l">{{ k.l }}</span><span class="kpi-v">{{ k.v }}</span><span class="kpi-s {% if k.bad_sub %}bad-t{% endif %}">{{ k.s }}</span></a>{% endfor %}</div>
 <div class="grid2" style="margin-bottom:16px">
   <div class="card"><div class="card-h"><h3>Sell-in pipeline</h3><span class="spacer"></span><span class="small muted">{{ n_pos }} POs · Order-to-Invoice</span></div><div class="card-b">{% include "partials/pipe.html" with arr=pipe_in %}</div></div>

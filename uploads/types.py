@@ -16,10 +16,17 @@ def is_fee(code):
     return k in ("FEE", "FIXEDFEE", "DEALFEE", "COOP", "COOPFEE", "MARKETINGFEE") or (k.endswith("FEE") and not k[:-3].isdigit())
 
 
+def lifecycle_of(v):
+    k = "".join(ch for ch in str(v or "").lower() if ch.isalnum())
+    return {"new": "new", "launch": "new", "active": "active", "running": "active", "regular": "active", "phaseout": "phase_out",
+            "phasingout": "phase_out", "clearance": "phase_out", "eol": "eol", "discontinued": "eol"}.get(k, "active")
+
+
 NUM_FIELDS = {"case_pack", "agreed_cost_sar", "free_stock", "qty_ordered", "unit_cost_sar", "qty", "cartons", "amount_paid_sar",
-              "deduction_sar", "support_per_unit_sar", "expected_units", "units", "rate_sar", "amount_sar"}
+              "deduction_sar", "support_per_unit_sar", "expected_units", "units", "rate_sar", "amount_sar",
+              "units_sold", "stock_on_hand", "sellout_forecast", "sellin_forecast", "rrp_sar"}
 DATE_FIELDS = {"valid_from", "valid_to", "order_date", "ship_window_start", "ship_window_end", "ship_date",
-               "remit_date", "start_date", "end_date", "dn_date", "cn_date", "request_date"}
+               "remit_date", "start_date", "end_date", "dn_date", "cn_date", "request_date", "date", "month"}
 
 # (field, required, synonyms)
 TYPES = OrderedDict([
@@ -27,7 +34,8 @@ TYPES = OrderedDict([
         ("sku_code", 1, ["sku", "material", "materialno", "itemcode", "mesku"]), ("model_no", 1, ["model", "modelnumber"]),
         ("asin", 1, ["amazonasin"]), ("category", 1, ["cat", "productcategory"]), ("ean", 0, ["barcode", "gtin", "upc"]),
         ("description", 0, ["desc", "name", "productname", "title"]),
-        ("case_pack", 0, ["casepack", "caseqty", "packsize", "unitspercase", "innerpack"])])),
+        ("case_pack", 0, ["casepack", "caseqty", "packsize", "unitspercase", "innerpack"]),
+        ("rrp_sar", 0, ["rrp", "retailprice", "msrp"]), ("status", 0, ["lifecycle", "modelstatus"])])),
     ("U2", dict(name="Agreed price list", src="Commercial team", go="/settings/?tab=prices", cols=[
         ("sku_code", 1, ["sku", "material", "asin", "model"]), ("agreed_cost_sar", 1, ["cost", "agreedcost", "netcost", "price", "costsar"]),
         ("valid_from", 1, ["from", "startdate", "validfrom"]), ("valid_to", 0, ["to", "enddate", "validto"])])),
@@ -42,7 +50,7 @@ TYPES = OrderedDict([
     ("U5", dict(name="SAP deliveries", src="SAP", go="/ship/?tab=asn", cols=[
         ("sap_delivery_no", 1, ["delivery", "deliveryno", "outbounddelivery"]), ("po_no", 1, ["po", "ponumber", "customerpo"]),
         ("sku_code", 1, ["sku", "material"]), ("qty", 1, ["quantity", "deliveredqty"]), ("cartons", 1, ["cases", "boxes"]),
-        ("ship_date", 1, ["shipdate", "gidate", "goodsissue"])])),
+        ("ship_date", 1, ["shipdate", "gidate", "goodsissue"]), ("sales_order", 0, ["so", "salesorder", "salesorderno"])])),
     ("U6", dict(name="Remittance / payments", src="Vendor Central payments", go="/pay/?tab=short", cols=[
         ("payment_no", 1, ["payment", "paymentnumber", "remittance", "paymentid"]), ("remit_date", 1, ["date", "paymentdate"]),
         ("invoice_no", 1, ["invoice", "invoicenumber"]), ("amount_paid_sar", 1, ["amountpaid", "paid", "amount"]),
@@ -51,7 +59,8 @@ TYPES = OrderedDict([
         ("promo_name", 1, ["name", "promotion"]), ("category", 1, ["cat"]), ("start_date", 1, ["start"]), ("end_date", 1, ["end"]),
         ("sku_code", 1, ["sku", "model", "asin"]), ("support_per_unit_sar", 1, ["support", "supportperunit", "fundingperunit"]),
         ("expected_units", 1, ["units", "expected"]), ("promo_type", 0, ["type", "promotiontype", "dealtype"]),
-        ("vendor_code", 0, ["vendor", "vendorcode"])])),
+        ("vendor_code", 0, ["vendor", "vendorcode"]), ("sf_ref", 0, ["meclref", "salesforceref", "sfref", "mecl"]),
+        ("brand_ref", 0, ["brandref", "activityref", "secondref"]), ("subcat", 0, ["subcategory", "subcat", "catcode"])])),
     ("U8", dict(name="Debit notes", src="Vendor Central", go="/dns/?tab=todo", cols=[
         ("dn_no", 1, ["dn", "debitnote", "debitnoteno"]), ("agreement_no", 1, ["agreement", "agreementnumber", "agreementid"]),
         ("dn_date", 1, ["date"]), ("sku_code", 1, ["sku", "asin", "model"]), ("units", 1, ["qty", "quantity"]),
@@ -62,6 +71,14 @@ TYPES = OrderedDict([
         ("rtv_no", 1, ["rtv", "return", "returnid", "authorization", "ra", "rano"]), ("request_date", 1, ["date", "requested", "returndate"]),
         ("sku_code", 1, ["sku", "asin", "model"]), ("qty", 1, ["quantity", "units"]), ("unit_cost_sar", 0, ["cost", "unitcost", "price"]),
         ("reason", 0, ["returnreason"]), ("fc_code", 0, ["fc", "warehouse", "shipfrom"]), ("vendor_code", 0, ["vendor", "vendorcode"])])),
+    ("U11", dict(name="Amazon sell-out & stock", src="Vendor Central sales + inventory reports", go="/?view=sellout", cols=[
+        ("asin", 1, ["sku", "model", "sku_code"]), ("date", 1, ["day", "reportdate", "weekending", "asof", "period"]),
+        ("units_sold", 1, ["unitssold", "sellout", "netunits", "shippedunits", "orderedunits", "units"]),
+        ("stock_on_hand", 0, ["soh", "sellableonhand", "onhand", "stock", "sellableonhandunits"])])),
+    ("U12", dict(name="Amazon forecast", src="Vendor Central forecasting report", go="/?view=sellout", cols=[
+        ("asin", 1, ["sku", "model", "sku_code"]), ("month", 1, ["date", "week", "forecastmonth", "period", "weekstart"]),
+        ("sellout_forecast", 1, ["forecast", "meanforecast", "sellout", "forecastunits", "mean"]),
+        ("sellin_forecast", 0, ["sellin", "sellinforecast", "orderforecast"])])),
 ])
 
 
@@ -239,6 +256,9 @@ def validate(tid, o, ctx, cfg):
             e.append(f"SKU/ASIN {o['sku_code']} not found" + _did_you_mean_sku(o["sku_code"]))
         elif num(o["qty"]) is not None and num(o["qty"]) <= 0:
             e.append("Quantity must be above 0")
+    elif tid in ("U11", "U12"):
+        if not sk():
+            e.append(f"ASIN / model {o['asin']} not found" + _did_you_mean_sku(o["asin"]))
     elif tid == "U9":
         from claims.models import Claim
         c = Claim.objects.filter(claim_no=o["claim_no"]).first()
@@ -312,6 +332,10 @@ def apply(tid, rows, user):
                 vals["description"] = o["description"]
             if o.get("case_pack") and num(o["case_pack"]) and num(o["case_pack"]) >= 1:
                 vals["case_pack"] = int(num(o["case_pack"]))
+            if o.get("rrp_sar") and num(o["rrp_sar"]):
+                vals["rrp_h"] = to_h(o["rrp_sar"])
+            if o.get("status"):
+                vals["lifecycle"] = lifecycle_of(o["status"])
             if s:
                 for k, v in vals.items():
                     setattr(s, k, v)
@@ -383,7 +407,8 @@ def apply(tid, rows, user):
         from orders.models import PurchaseOrder
         for no, ls in group(rows, "sap_delivery_no").items():
             po = PurchaseOrder.objects.get(po_no=ls[0]["po_no"])
-            d = make_delivery(po, now, delivery_no=no, ship_date=parse_date(ls[0]["ship_date"]))
+            d = make_delivery(po, now, delivery_no=no, ship_date=parse_date(ls[0]["ship_date"]),
+                              sales_order=str(ls[0].get("sales_order") or "").strip()[:20])
             d.cartons = int(sum(num(o["cartons"]) for o in ls))
             d.save()
             qty = {resolve_sku(o["sku_code"]).pk: int(num(o["qty"])) for o in ls}
@@ -426,7 +451,8 @@ def apply(tid, rows, user):
             create_promotion(user, name, cat_of(ls[0]["category"]), st, en, "Product team",
                              [(resolve_sku(o["sku_code"]), to_h(o["support_per_unit_sar"]), int(num(o["expected_units"]))) for o in ls],
                              source="bulk upload", promo_type=type_of(ls[0].get("promo_type")),
-                             vendor_code=str(ls[0].get("vendor_code") or "").strip().upper()[:12])
+                             vendor_code=str(ls[0].get("vendor_code") or "").strip().upper()[:12],
+                             refs={k: str(ls[0].get(k) or "").strip() for k in ("sf_ref", "brand_ref", "subcat")})
             created += 1
         lines += [f"{created} promotions created as drafts", "Submit them to Amazon from the Promotions page"]
     elif tid == "U8":
@@ -457,6 +483,30 @@ def apply(tid, rows, user):
                 sh += 1
                 notify(f"Credit note short on {c.claim_no}: {fmt_sar(c.gap_h)}", "bad", ("promo", c.promotion.mecl_ref, "claim"))
         lines += [f"{created} credit notes recorded (R11)", f"{created - sh} claims closed · {sh} shortfall"]
+    elif tid == "U11":
+        from catalog.models import AmazonStock, SellOut
+        stock = 0
+        for o in rows:
+            s, day = resolve_sku(o["asin"]), parse_date(o["date"]).date()
+            _, new = SellOut.objects.update_or_create(sku=s, day=day, defaults={"units": int(num(o["units_sold"]))})
+            created, updated = created + new, updated + (not new)
+            if o.get("stock_on_hand") not in (None, ""):
+                AmazonStock.objects.update_or_create(sku=s, as_of=day, defaults={"units": int(num(o["stock_on_hand"]))})
+                stock += 1
+        lines += [f"{len(rows)} sell-out rows loaded ({created} new, {updated} updated)", f"{stock} stock-on-hand figures"]
+    elif tid == "U12":
+        from catalog.models import Forecast
+        acc = {}
+        for o in rows:                                 # weekly rows add up into their month
+            s, d = resolve_sku(o["asin"]), parse_date(o["month"]).date()
+            k = (s.pk, d.replace(day=1))
+            so, si = acc.get(k, (0, None))
+            sin = o.get("sellin_forecast")
+            acc[k] = (so + int(num(o["sellout_forecast"])), (si or 0) + int(num(sin)) if sin not in (None, "") else si)
+        for (sku_id, month), (so, si) in acc.items():
+            _, new = Forecast.objects.update_or_create(sku_id=sku_id, month=month, defaults={"sellout_units": so, "sellin_units": si})
+            created, updated = created + new, updated + (not new)
+        lines += [f"Forecast for {len(acc)} model-months loaded", "See it in Dashboard → Sell-out tracker"]
     elif tid == "U10":
         from returns.models import RTV_REASONS
         from returns.services import create_rtv
@@ -573,6 +623,14 @@ def sample_rows(tid, dry=False):
         for i, c in enumerate(Claim.objects.filter(status="sent").order_by("sent_at")[:2]):
             amt = c.amount_h * 0.9 if i == 1 else c.amount_h
             rows.append([f"CN-{base + i}", c.claim_no, today, f"{amt / 100:.2f}"])
+    elif tid == "U11":
+        for s in Sku.objects.filter(category="PA")[:3]:
+            for k in range(3):
+                rows.append([s.asin, (timezone.localdate() - timedelta(days=7 * k + 1)).isoformat(), rnd.randint(2, 30), rnd.randint(10, 80) if k == 0 else ""])
+    elif tid == "U12":
+        m = timezone.localdate().replace(day=1).isoformat()
+        for s in Sku.objects.filter(category="PA")[:3]:
+            rows.append([s.asin, m, rnd.randint(20, 90), ""])
     elif tid == "U10":
         n = rnd.randint(110000, 119999)
         for i, s in enumerate(Sku.objects.filter(category__in=["PA", "HAV"])[:3]):

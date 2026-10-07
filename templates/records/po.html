@@ -4,7 +4,7 @@
 {% block title %}{{ po.po_no }}{% endblock %}
 {% block chip %}{% po_chip po %}{% endblock %}
 {% block head %}
-<div class="sum">{% if po.vendor_code %}<span>Vendor code <b class="mono">{{ po.vendor_code }}</b></span>{% endif %}<span>FC <b>{{ po.fc.code }}</b></span><span>Ordered <b>{{ po.order_date|fd }}</b></span>
+<div class="sum">{% if po.vendor_code %}<span>Vendor code <b class="mono">{{ po.vendor_code }}</b></span>{% endif %}{% if po.rfpo %}<span>RFPO <b class="mono">{{ po.rfpo }}</b></span>{% endif %}<span>FC <b>{{ po.fc.code }}</b></span><span>Ordered <b>{{ po.order_date|fd }}</b></span>
 {% if po.stage == 'new' %}<span>Confirm by <b class="{% if state == 'overdue' %}bad-t{% endif %}">{{ po.confirm_by|fdt }}</b> <span class="{% if state == 'overdue' %}bad-t{% endif %}">({{ po.confirm_by|due }})</span></span>{% endif %}
 <span>Ship window <b>{{ po.window_start|fd }} – {{ po.window_end|fd }}</b></span><span>Value <b>{{ value|sar }}</b></span></div>
 {% include "partials/chain.html" %}
@@ -37,6 +37,9 @@
     {% for l in lines %}<tr><td><b style="font-weight:500">{{ l.sku.model_no }}</b><div class="small muted">{{ l.sku.description }}</div></td><td class="mono">{{ l.asin }}</td><td class="num">{{ l.qty_ordered|num }}</td><td class="num">{{ l.qty_confirmed|num }}</td>{% if any_bo %}<td class="num">{% if l.qty_backorder %}{{ l.qty_backorder|num }}{% if l.backorder_eta %}<div class="small muted">by {{ l.backorder_eta|date:"j M" }}</div>{% endif %}{% else %}—{% endif %}</td>{% endif %}<td class="num">{{ shipped|get:l.sku_id|default:0|num }}</td><td class="num">{{ l.cost_h|n2 }}</td><td class="num">{{ l.committed|mul:l.cost_h|n }}</td>
     <td>{% if l.decision == 'accept' %}{% chip "Accepted" "ok" %}{% elif l.decision == 'partial' %}{% chip "Partial" "warn" %}{% elif l.decision == 'backorder' %}{% chip "Backordered" "warn" %}{% else %}{% chip "Rejected" "bad" %}{% endif %}{% if l.reason %}<div class="small muted">{{ l.reason }}</div>{% endif %}</td></tr>{% endfor %}
     </tbody></table></div>
+    {% if po.stage_index >= 2 %}<details class="inline-form"><summary class="small">References{% if po.rfpo %}: RFPO {{ po.rfpo }}{% endif %}</summary>
+    <form class="row" style="gap:6px;margin-top:8px" hx-post="/pos/{{ po.po_no }}/references/" hx-swap="none">
+    <input class="inp" name="rfpo" value="{{ po.rfpo }}" placeholder="RFPO" aria-label="RFPO" style="width:160px"><button class="btn sm" type="submit" {% perm 'book' %}>Save</button></form></details>{% endif %}
   {% endif %}
 
 {% elif tab == 'shipment' %}
@@ -61,7 +64,7 @@
   {% else %}
     <div class="kv2"><div><span>ASN</span><b class="mono">{{ sh.asn_no }}</b></div><div><span>SAP delivery</span><b class="mono">{{ sh.sap_delivery_no }}</b></div><div><span>Cartons</span><b>{{ sh.cartons }}</b></div><div><span>Ship date</span><b>{{ sh.ship_date|fdt }}</b></div>
     <div><span>{% if sh.freight == 'collect' %}Amazon pickup (collect){% else %}Carrier Central slot{% endif %}</span><b>{% if sh.slot_id %}<span class="mono">{{ sh.slot_id }}</span> · {{ sh.slot_start|fdt }}{% else %}<span class="warn-t">Not booked</span>{% endif %}</b></div><div><span>Delivered</span><b>{{ po.delivered_at|fdt }}</b></div></div>
-    {% if ships|length > 1 %}<div class="tw"><table class="dt compact"><thead><tr><th>#</th><th>ASN</th><th>Ships</th><th>Delivered</th><th class="num">Units</th></tr></thead><tbody>{% for x in ships %}<tr{% if x == sh %} class="sel"{% endif %}><td>{{ x.seq }}</td><td class="mono">{{ x.asn_no }}</td><td>{{ x.ship_date|fd }}</td><td>{% if x.delivered_at %}{{ x.delivered_at|fd }}{% else %}<span class="faint">—</span>{% endif %}</td><td class="num">{{ x.lines.all|sum_qty|num }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
+    {% if ships|length > 1 %}<div class="tw"><table class="dt compact"><thead><tr><th>#</th><th>Sales order</th><th>ASN</th><th>Ships</th><th>Delivered</th><th class="num">Units</th></tr></thead><tbody>{% for x in ships %}<tr{% if x == sh %} class="sel"{% endif %}><td>{{ x.seq }}</td><td class="mono">{{ x.sales_order|default:"—" }}</td><td class="mono">{{ x.asn_no }}</td><td>{{ x.ship_date|fd }}</td><td>{% if x.delivered_at %}{{ x.delivered_at|fd }}{% else %}<span class="faint">—</span>{% endif %}</td><td class="num">{{ x.lines.all|sum_qty|num }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
     {% if open_units %}<div class="banner warn">{% icon 'clock' %}<span class="t"><b>{{ open_units|num }} units still to ship</b> on this PO (backorder or a short delivery). They go in the next shipment.</span></div>{% endif %}
     {% if sh.slot_outcome %}<div class="banner bad">{% icon 'alert' %}<span class="t"><b>Last appointment {{ sh.slot_outcome }}:</b> {{ sh.slot_note }}. Book a new slot.</span></div>{% endif %}
     {% if needs_pod %}<div class="banner warn">{% icon 'alert' %}<span class="t"><b>No proof of delivery attached.</b> Attach the signed POD / GRN so a shortage Amazon deducts later can be disputed.</span><button class="btn sm" hx-get="{{ base }}?tab=docs" hx-target="#drawer">Attach POD</button></div>{% endif %}
@@ -147,6 +150,7 @@
 {% elif po.stage == 'confirmed' %}
   <form hx-post="/pos/{{ po.po_no }}/book/" hx-swap="none" class="row" style="flex-wrap:nowrap">
     <input type="hidden" name="version" value="{{ po.version }}">
+    <input class="inp" name="rfpo" placeholder="RFPO" aria-label="RFPO" style="width:120px" {% if not caps.book %}disabled{% endif %}>
     {% if not demo %}<input class="inp" name="sap_order_no" placeholder="SAP order #" aria-label="SAP order number" style="width:150px">{% endif %}
     <button class="btn pri" {% perm 'book' %}>Book in SAP &amp; Salesforce</button></form>
 {% elif po.stage == 'booked' %}

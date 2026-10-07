@@ -190,3 +190,15 @@ def test_documents_and_budget(page):
     assert "Invoice_" in d.inner_text()
     page.goto("/promos/?view=budget")
     assert "Digital imaging" in page.inner_text("#view")
+
+
+def test_trackers_on_the_dashboard(page):
+    sign_in(page, "tariq")
+    for view, text in (("po", "Inv submission"), ("sellout", "Sellout FCT"), ("claims", "AMZ Claim value")):
+        page.goto(f"/?view={view}")
+        page.get_by_text(text).first.wait_for()
+        with page.expect_download() as dl:
+            page.get_by_role("link", name="Export").click()
+        assert dl.value.suggested_filename.endswith(".xlsx")
+    page.goto("/?view=po&status=all&q=5DRWD3VG")
+    assert page.locator(".trk tbody tr").count() == 2

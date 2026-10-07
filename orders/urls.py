@@ -11,6 +11,7 @@ urlpatterns = [
     path("<str:po_no>/release/", views.release),
     path("<str:po_no>/hold/", views.hold),
     path("<str:po_no>/change/", views.change),
+    path("<str:po_no>/references/", views.references),
     path("<str:po_no>/backorder/ship/", views.ship_backorder),
     path("<str:po_no>/backorder/close/", views.close_backorder),
     path("<str:po_no>/sync-delivery/", views.sync_delivery),

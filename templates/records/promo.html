@@ -12,12 +12,18 @@
 
 {% block body %}
 {% if tab == 'models' %}
-  <div class="kv2"><div><span>Promotion</span><b>{{ p.name }}</b></div><div><span>MECL ref</span><b class="mono">{{ p.mecl_ref }}</b></div><div><span>Amazon agreement #</span><b class="mono">{{ p.agreement_no|default:"—" }}</b></div><div><span>Stage</span>{% promo_chip p st %}</div></div>
+  <div class="kv2"><div><span>Promotion</span><b>{{ p.name }}</b></div><div><span>MECL ref</span><b class="mono">{{ p.sf_ref|default:p.mecl_ref }}</b>{% if p.sf_ref %} <span class="small muted mono">{{ p.mecl_ref }}</span>{% endif %}</div><div><span>Amazon agreement #</span><b class="mono">{{ p.agreement_no|default:"—" }}</b></div><div><span>Stage</span>{% promo_chip p st %}</div></div>
   <div class="tw"><table class="dt compact"><thead><tr><th>Model</th><th class="num">Support / unit SAR</th><th class="num">Expected units</th><th class="num">Expected support SAR</th><th class="num">Sold units</th></tr></thead><tbody>
   {% for l in lines %}<tr><td><button type="button" class="lk-plain" hx-get="/records/sku/{{ l.sku.sku_code }}/" hx-target="#drawer"><b style="font-weight:500">{{ l.sku.model_no }}</b></button><div class="small muted">{{ l.sku.description }} · <span class="mono">{{ l.sku.sku_code }}</span></div></td>
   <td class="num">{{ l.support_h|n2 }}</td><td class="num">{{ l.expected_units|num }}</td><td class="num">{{ l.expected_units|mul:l.support_h|n }}</td><td class="num">{% if l.sold_units is None %}<span class="faint">After promo</span>{% else %}{{ l.sold_units|num }}{% endif %}</td></tr>{% endfor %}</tbody>
   <tfoot><tr><td>Total</td><td></td><td class="num">{{ exp_units|num }}</td><td class="num">{{ support|n }}</td><td class="num">{% if sold_units is not None %}{{ sold_units|num }}{% endif %}</td></tr></tfoot></table></div>
   <p class="small faint">Sold units come from the Amazon sales report for the promo dates. They set the expected debit note value.</p>
+  <details class="inline-form"><summary class="small">References{% if p.sf_ref or p.brand_ref or p.subcat %}: {{ p.sf_ref|default:"—" }} · {{ p.brand_ref|default:"—" }} · {{ p.subcat|default:"—" }}{% endif %}</summary>
+    <form class="row" style="gap:6px;margin-top:8px" hx-post="/promos/{{ p.mecl_ref }}/references/" hx-swap="none">
+    <input class="inp" name="sf_ref" value="{{ p.sf_ref }}" placeholder="MECL ref (Salesforce)" aria-label="MECL ref from Salesforce" style="width:170px">
+    <input class="inp" name="brand_ref" value="{{ p.brand_ref }}" placeholder="Second ref" aria-label="Second reference" style="width:170px">
+    <input class="inp" name="subcat" value="{{ p.subcat }}" placeholder="Sub-cat" aria-label="Sub-category" style="width:90px">
+    <button class="btn sm" type="submit" {% perm 'promo' %}>Save</button></form></details>
   {% with fees=p.fees.all %}{% if fees %}<h3 class="sect-h">Fixed fees</h3><div class="tw"><table class="dt compact"><thead><tr><th>Fee</th><th class="num">SAR</th></tr></thead><tbody>{% for f in fees %}<tr><td>{{ f.label }}</td><td class="num">{{ f.amount_h|n }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}{% endwith %}
   <p class="small muted">Billing: {% if p.dn_instalments %}<b>instalments</b> — Amazon may send several debit notes (e.g. monthly); each is checked against what is left.{% else %}one debit note after the end (a later correction DN is checked against what is left).{% endif %}</p>
   {% if p.stage == 'draft' or p.stage == 'submitted' %}<details class="inline-form"><summary class="small">Add a fixed fee or change billing</summary>
@@ -85,7 +91,7 @@
   {% if tab == 'models' %}<button class="btn pri" hx-post="/promos/{{ p.mecl_ref }}/approve/" hx-include="#agr-in" hx-vals='{"version": "{{ p.version }}"}' hx-swap="none" {% perm 'promo' %}>{% icon 'check' %}<span>Record approval</span></button>
   {% else %}<button class="btn pri" hx-get="{{ base }}?tab=models" hx-target="#drawer">Record approval</button>{% endif %}
 {% elif st == 'waiting_dn' %}
-  {% if demo and missing_sold %}<button class="btn" hx-post="/promos/{{ p.mecl_ref }}/sold/" hx-swap="none" {% perm 'promo' %}>{% icon 'refresh' %}<span>Pull sold units (simulated)</span></button>{% endif %}
+  {% if missing_sold %}<button class="btn" hx-post="/promos/{{ p.mecl_ref }}/sold/" hx-swap="none" {% perm 'promo' %}>{% icon 'refresh' %}<span>Pull sold units from the sales report</span></button>{% endif %}
 {% elif st == 'dn_overdue' %}
   <button class="btn pri" hx-post="/promos/{{ p.mecl_ref }}/chase/" hx-swap="none" {% perm 'promo' %}>Log chase with Amazon</button>
 {% elif st == 'dn_received' %}

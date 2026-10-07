@@ -259,13 +259,27 @@ def _book(po, at, user=None, name=None, sap_order_no=None):
 
 
 @transaction.atomic
-def book_po(user, po_no, version=None, sap_order_no=None):
+def book_po(user, po_no, version=None, sap_order_no=None, rfpo=""):
     require(user, "book")
     po = get_po(po_no, lock=True)
     check_version(po, version)
     if po.stage != "confirmed":
         raise CommandError("Only confirmed POs can be booked.")
+    if rfpo:
+        po.rfpo = rfpo.strip()[:30]
     _book(po, timezone.now(), user, sap_order_no=sap_order_no or None)
+    return po
+
+
+@transaction.atomic
+def set_references(user, po_no, rfpo):
+    """ME's own references on the PO (RFPO), editable after booking."""
+    require(user, "book")
+    po = get_po(po_no, lock=True)
+    old, po.rfpo = po.rfpo, (rfpo or "").strip()[:30]
+    po.bump()
+    po.save()
+    audit("po", po.po_no, f"RFPO set to {po.rfpo or '—'}" + (f" (was {old})" if old else ""), user, action="references")
     return po
 
 
@@ -318,7 +332,7 @@ CHANGEABLE = ["new", "confirmed", "booked", "released", "backorder"]
 
 
 @transaction.atomic
-def ship_backorder(user, po_no, version=None):
+def ship_backorder(user, po_no, version=None, sales_order=""):
     """Stock for the backorder has arrived: open the next shipment (a new SAP delivery, ASN, slot and invoice)."""
     require(user, "ship")
     po = get_po(po_no, lock=True)
@@ -332,7 +346,7 @@ def ship_backorder(user, po_no, version=None):
     po.save()
     audit("po", po.po_no, f"Backorder released for shipment: {left:,} units", user, action="backorder_ship")
     if settings.DEMO_SIMULATIONS:
-        make_delivery(po, timezone.now())
+        make_delivery(po, timezone.now(), sales_order=(sales_order or "").strip())
     return po
 
 
@@ -472,6 +486,16 @@ def amazon_change(user, po_no, new_qty, cancel=False, reason="", window_end=None
         from payments.services import settle_po
         settle_po(po)
     return po, changes
+
+
+def _create_po_for_seed(po_no, fc, order_date, sku, qty):
+    """Demo data only: a one-line PO at the agreed cost, without running the suggestions."""
+    po = PurchaseOrder.objects.create(po_no=po_no, fc=fc, order_date=order_date, confirm_by=order_date + timedelta(days=1),
+                                      window_start=order_date + timedelta(days=2), window_end=order_date + timedelta(days=10))
+    po.lines.create(position=0, sku=sku, asin=sku.asin, qty_ordered=qty, cost_h=sku.cost_h)
+    audit("po", po_no, "PO received from Amazon (1 line) via file upload", name="Vendor Central import", system=True, action="import",
+          at=order_date + timedelta(hours=1))
+    return po
 
 
 def create_po(po_no, fc, order_date, confirm_by, lines, *, window_start=None, window_end=None, user=None,

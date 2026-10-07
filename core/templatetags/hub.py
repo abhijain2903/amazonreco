@@ -279,6 +279,14 @@ def cell(v, kind):
         return f"{int(v):,}" if float(v).is_integer() else f"{v:,.1f}"
     if kind == "date":
         return f"{v:%d %b}"
+    if kind == "int":
+        return f"{v:,}"
+    if kind == "sar2":
+        return f"{v / 100:,.2f}"
+    if kind == "dmon":
+        return f"{v.day}-{v:%b}"
+    if kind == "dmy":
+        return f"{v.day} {v:%b %Y}"
     return v
 
 

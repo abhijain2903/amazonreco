@@ -7,6 +7,7 @@ urlpatterns = [
     path("new/", views.wizard),
     path("budgets/", views.budget_save),
     path("<str:ref>/fee/", views.fee),
+    path("<str:ref>/references/", views.references),
     path("<str:ref>/instalments/", views.instalments),
     path("<str:ref>/amend/", views.amend),
     path("<str:ref>/submit/", views.submit),

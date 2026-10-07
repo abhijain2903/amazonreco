@@ -70,8 +70,10 @@ class Command(BaseCommand):
             self.backorder_demo()
             self.returns_demo()
             self.history()
+            self.split_booking_demo()
             self.vendor_codes()
             self.documents()
+            self.tracker_data()
         self.stdout.write(self.style.SUCCESS("Example data loaded."))
 
     def backorder_demo(self):
@@ -184,6 +186,78 @@ class Command(BaseCommand):
                 audit("dispute", d.case_no, "Dispute opened", name=self.names["Finance"], at=opened)
             audit("po", p.po.po_no, f"Deduction of SAR {amt / 100:,.0f} ({reason}) " + {"accepted": "accepted", "lost": "disputed and lost",
                   "partial": "disputed, part recovered", "won": "disputed and recovered"}[outcome], name=self.names["Finance"], at=p.remit_date + timedelta(days=2))
+
+    def split_booking_demo(self):
+        """ME's own example: Amazon orders 438 units of one model; ME books and ships it in two portions (386 + 52),
+        each with its own sales order, ASN, delivery and invoice."""
+        from billing.services import _invoice
+        from fulfilment.services import _book_slot, _deliver, _submit_asn, make_delivery
+        from orders.services import _book, _confirm, _create_po_for_seed, _release
+        N = self.names
+        sku = next(s for s in self.by_cat["PA"] if s.cost_h >= 50000) if any(s.cost_h >= 50000 for s in self.by_cat["PA"]) else self.by_cat["PA"][0]
+        fc = next(f for f in self.fcs if f.code.startswith("JED"))
+        od = self.t(-28, -3)
+        po = _create_po_for_seed("5DRWD3VG", fc, od, sku, 438)
+        l = po.lines.get()
+        if sku.free_stock < 386:
+            sku.free_stock = 400
+            sku.save(update_fields=["free_stock"])
+        l.decision, l.qty_confirmed, l.qty_backorder, l.reason, l.backorder_eta = "backorder", 386, 52, "Backordered: stock expected", (od + timedelta(days=9)).date()
+        l.save()
+        at = od + timedelta(hours=6)
+        _confirm(po, at, name=N["PIC"])
+        _book(po, at + timedelta(hours=5), name=N["Planning"], sap_order_no="3009477")
+        _release(po, at + timedelta(hours=9), name=N["Credit"], with_delivery=False)
+        for k, (when, so) in enumerate([(od + timedelta(days=2), "3009477"), (od + timedelta(days=9), "3009779")]):
+            if k:
+                po.stage = "released"
+                po.save()
+            make_delivery(po, when, ship_date=when + timedelta(days=1), sales_order=so)
+            _submit_asn(po, when + timedelta(hours=4), name=N["Logistics"])
+            _book_slot(po, when + timedelta(hours=6), f"CC{next_number('slot', 66120)}", po.shipment.ship_date + timedelta(hours=10),
+                       "08:00–12:00", name=N["Logistics"])
+            _deliver(po, po.shipment.slot_start + timedelta(hours=1), name=N["Logistics"])
+            _invoice(po, po.shipment.slot_start + timedelta(hours=20), name=N["PIC"])
+        po.refresh_from_db()
+
+    def tracker_data(self):
+        """What the trackers need beyond the transactions: RFPO references, RRP and model status, 40 weeks of Amazon
+        sell-out, Amazon stock on hand, this month's forecast, and the promotions' Salesforce / brand references."""
+        from catalog.models import AmazonStock, Forecast, SellOut
+        from orders.models import PurchaseOrder
+        from promotions.models import Promotion
+        rnd = random.Random(77)
+        for i, po in enumerate(PurchaseOrder.objects.exclude(stage__in=["new", "confirmed", "rejected"]).order_by("order_date")):
+            po.rfpo = f"RFPO-{64601 + i}"
+            po.save(update_fields=["rfpo"])
+        today = timezone.localdate()
+        last_sat = today - timedelta(days=(today.weekday() - 5) % 7 or 7)
+        rate = {"PA": (6, 30), "DI": (2, 12), "TV": (1, 8), "HAV": (2, 10), "Bundle": (1, 6)}
+        sell, stock, fct = [], [], []
+        month1 = today.replace(day=1)
+        for i, s in enumerate(self.skus):
+            s.rrp_h = (round(s.cost_h * 1.35 / 1000) * 10 - 1) * 100
+            s.lifecycle = "new" if i % 11 == 0 else "eol" if i % 29 == 0 else "phase_out" if i % 17 == 0 else "active"
+            lo, hi = rate[s.category]
+            base = rnd.randint(lo, hi)
+            weeks = 6 if s.lifecycle == "new" else 40
+            for w in range(weeks):
+                sell.append(SellOut(sku=s, day=last_sat - timedelta(weeks=w), units=max(0, round(base * (0.6 + rnd.random() * 0.8)) - (1 if rnd.random() < .1 else 0))))
+            stock.append(AmazonStock(sku=s, as_of=last_sat, units=0 if s.lifecycle == "eol" else rnd.randint(0, base * 6)))
+            if s.lifecycle != "eol":
+                fct.append(Forecast(sku=s, month=month1, sellout_units=round(base * 4.3 * (0.9 + rnd.random() * 0.3)),
+                                    sellin_units=round(base * 4.3) if i % 3 == 0 else None))
+        from catalog.models import Sku
+        Sku.objects.bulk_update(self.skus, ["rrp_h", "lifecycle"])
+        SellOut.objects.bulk_create(sell)
+        AmazonStock.objects.bulk_create(stock)
+        Forecast.objects.bulk_create(fct)
+        sub = {"PA": ["HPH", "GPA", "TWS"], "DI": ["DSC", "LNS"], "TV": ["TVL"], "HAV": ["SBR", "AVR"], "Bundle": ["BND"]}
+        for i, p in enumerate(Promotion.objects.order_by("created_at")):
+            p.sf_ref = f"PRO-{4540 + i:06d}"
+            p.brand_ref = f"0125CAV-{p.category[:2].upper()}MKT{150 + i}"
+            p.subcat = sub[p.category][i % len(sub[p.category])]
+            p.save(update_fields=["sf_ref", "brand_ref", "subcat"])
 
     def documents(self):
         """The files each seeded PO would have produced (acknowledgement, ASN, carton labels, invoice), so the Documents

@@ -41,7 +41,9 @@ DB settings come from `POSTGRES_*` env vars (default db `mehub`, host `localhost
 - Templates: `pages/` (full pages extending `base.html`, content inside `#view`), `records/` (drawers extending `records/_drawer.html`),
   `dialogs/` (extending `dialogs/_modal.html`), `partials/`. Custom tags/filters in `core/templatetags/hub.py` (builtins, no `{% load %}` needed).
 - Client JS is only `static/js/hub.js` (toasts, drawer/modal events, palette, SSE, drag-drop). Keep new UI server-rendered.
-- Upload types U1-U10: columns, synonyms, validation, import and sample files all in `uploads/types.py`.
+- Upload types U1-U12 (U11 Amazon sell-out & stock, U12 Amazon forecast): columns, synonyms, validation, import and sample files all in `uploads/types.py`.
+- ME's own trackers (PO, sell-out, claim) are dashboard tabs (`/?view=po|sellout|claims`), built in `core/trackers.py` with the exact
+  column order of ME's Excel sheets; the export gives ME's columns only, the hub's extra columns come after them on screen.
 - External systems only through adapters in `integrations/connectors.py`; live methods raise `NotImplementedError` until built.
 - Demo switches: `HUB_DEMO_SIMULATIONS` (simulate SAP/Amazon steps), `HUB_DEV_LOGIN` (user picker), `HUB_DEMO_PASSWORD` (access code),
   `HUB_DJANGO_ADMIN` (false on client-facing hosts: no `/admin/`, no Admin console link).

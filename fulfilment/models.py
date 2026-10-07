@@ -8,6 +8,7 @@ from orders.models import PurchaseOrder
 class SapDelivery(Base):
     po = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, related_name="sap_deliveries")
     seq = models.PositiveIntegerField(default=1, help_text="1st, 2nd … delivery for the PO")
+    sales_order = models.CharField(max_length=20, blank=True, help_text="Sales order of this booking portion")
     delivery_no = models.CharField(max_length=20, unique=True)
     cartons = models.IntegerField(default=1)
     ship_date = models.DateTimeField()
@@ -28,6 +29,7 @@ class Shipment(Base):
 
     po = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, related_name="shipments")
     seq = models.PositiveIntegerField(default=1, help_text="1st, 2nd … shipment for the PO")
+    sales_order = models.CharField(max_length=20, blank=True, help_text="Sales order of this booking portion")
     delivered_at = models.DateTimeField(null=True, blank=True)
     asn_no = models.CharField(max_length=20, unique=True)
     sap_delivery_no = models.CharField(max_length=20)

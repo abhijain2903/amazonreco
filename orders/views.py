@@ -228,7 +228,8 @@ def confirm(request, po_no):
 
 @require_POST
 def book(request, po_no):
-    po = svc.book_po(request.user, po_no, request.POST.get("version"), request.POST.get("sap_order_no", "").strip())
+    po = svc.book_po(request.user, po_no, request.POST.get("version"), request.POST.get("sap_order_no", "").strip(),
+                     request.POST.get("rfpo", ""))
     return htmx.done(request, f"SAP order {po.sap_order_no}" + (f" and Salesforce {po.sf_order_id}" if po.sf_order_id else "") + " created")
 
 
@@ -282,8 +283,14 @@ def slot(request, po_no):
 
 
 @require_POST
+def references(request, po_no):
+    po = svc.set_references(request.user, po_no, request.POST.get("rfpo", ""))
+    return htmx.done(request, f"RFPO saved for {po.po_no}", refresh=False)
+
+
+@require_POST
 def ship_backorder(request, po_no):
-    po = svc.ship_backorder(request.user, po_no, request.POST.get("version"))
+    po = svc.ship_backorder(request.user, po_no, request.POST.get("version"), request.POST.get("sales_order", ""))
     return htmx.done(request, f"{po.po_no}: next shipment opened" + (". SAP delivery received" if delivery_of(po) else ". Upload the SAP delivery (U5)"))
 
 

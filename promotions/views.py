@@ -176,6 +176,13 @@ def fee(request, ref):
 
 
 @require_POST
+def references(request, ref):
+    P = request.POST
+    svc.set_references(request.user, ref, P.get("sf_ref"), P.get("brand_ref"), P.get("subcat"))
+    return htmx.done(request, "References saved", refresh=False)
+
+
+@require_POST
 def instalments(request, ref):
     p = svc.set_instalments(request.user, ref, request.POST.get("on") == "1")
     return htmx.done(request, "Billed in instalments" if p.dn_instalments else "Billed with one debit note", "info")
