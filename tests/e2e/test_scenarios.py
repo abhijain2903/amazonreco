@@ -19,8 +19,15 @@ def expect_toast(page, text):
     page.locator(".toast", has_text=text).first.wait_for()
 
 
+def sign_out(page):
+    # Leave the page first: a drawer reload still in flight would otherwise set the old session cookie again.
+    page.goto("about:blank")
+    page.context.clear_cookies()
+
+
 def open_record(page, url):
-    page.evaluate(f"htmx.ajax('GET', '{url}', {{target: '#drawer'}})")
+    # Same request source as the hub's own drawer loads, so it queues behind a drawer reload still in flight.
+    page.evaluate(f"htmx.ajax('GET', '{url}', {{source: '#drawer', target: '#drawer'}})")
     d = drawer(page)
     d.wait_for()
     page.wait_for_timeout(300)
@@ -128,13 +135,13 @@ def test_return_authorise_receive_and_match(page):
     d = open_record(page, "/records/rtv/RTV-118842/")
     d.get_by_role("button", name="Authorise return").click()
     toast_text(page)
-    page.context.clear_cookies()
+    sign_out(page)
     sign_in(page, "khalid")
     d = open_record(page, "/records/rtv/RTV-118842/")
     d.locator("input[name^=r-]").first.fill("5")
     d.get_by_role("button", name="Record goods received").click()
     assert "received" in toast_text(page).lower()
-    page.context.clear_cookies()
+    sign_out(page)
     sign_in(page, "priya")
     d = open_record(page, "/records/rtv/RTV-117903/")
     d.get_by_role("button", name="Match").first.click()

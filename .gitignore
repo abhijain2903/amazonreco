@@ -8,3 +8,6 @@ staticfiles/
 test-results/
 *.sqlite3
 .DS_Store
+
+# demo screenshots and PDFs (built by docs/demo/*.py)
+docs/demo/out/

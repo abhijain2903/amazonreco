@@ -23,19 +23,28 @@
 
   function busy() { return !!(document.activeElement && document.activeElement.matches('input,select,textarea')); }
 
+  // Each area is its own request source. Without a source htmx uses <body> for every call, and while one is in flight
+  // the next ones queue with "last": only the newest survives, so a view refresh could silently drop the drawer reload.
+  function load(url, target, opts) {
+    return htmx.ajax('GET', url, Object.assign({ source: target, target: target, swap: 'innerHTML' }, opts || {}));
+  }
   function reloadView() {
     const v = $('#view'); if (!v) return;
-    htmx.ajax('GET', location.pathname + location.search, { target: '#view', select: '#view', swap: 'outerHTML' });
+    load(location.pathname + location.search, '#view', { select: '#view', swap: 'outerHTML' });
   }
   function reloadNav() {
-    htmx.ajax('GET', '/nav/?path=' + encodeURIComponent(location.pathname), { target: '#side', swap: 'innerHTML' });
-    htmx.ajax('GET', '/topbar/', { target: '#bell-slot', swap: 'innerHTML' });
+    load('/nav/?path=' + encodeURIComponent(location.pathname), '#side');
+    load('/topbar/', '#bell-slot');
   }
   function reloadDrawer() {
     const d = $('#drawer [data-url]'); if (!d) return;
     // Until the fresh drawer arrives its buttons are stale: a click now would be lost when the drawer is replaced.
     const a = $('#drawer aside.drawer'); if (a) a.classList.add('reloading');
-    htmx.ajax('GET', d.dataset.url, { target: '#drawer', swap: 'innerHTML' });
+    const clear = () => { if (a) a.classList.remove('reloading'); };
+    // Whatever happens to the request (swapped, cancelled, superseded by another refresh), never leave buttons blocked.
+    setTimeout(clear, 2500);
+    const req = load(d.dataset.url, '#drawer', { headers: { 'X-Hub-Reload': d.dataset.url } });
+    if (req && req.then) req.then(clear, clear);
   }
   function closeDrawer() { $('#drawer').innerHTML = ''; }
   function closeModal() { $('#modal').innerHTML = ''; }
@@ -45,7 +54,7 @@
   document.addEventListener('drawerReload', reloadDrawer);
   // Deferred so the other HX-Trigger events (openDrawer, toast) still bubble from the element inside the modal.
   document.addEventListener('closeModal', () => setTimeout(closeModal, 0));
-  document.addEventListener('openDrawer', e => htmx.ajax('GET', e.detail.url, { target: '#drawer', swap: 'innerHTML' }));
+  document.addEventListener('openDrawer', e => load(e.detail.url, '#drawer'));
   // An autosaving form that stays open learns its record's new version (optimistic locking).
   document.addEventListener('version', e => { String(e.detail.id).split(',').forEach(id => { const el = document.getElementById(id); if (el) el.value = e.detail.v; }); });
 
@@ -68,7 +77,7 @@
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
       e.preventDefault();
       if ($('#pal').innerHTML) { $('#pal').innerHTML = ''; return; }
-      htmx.ajax('GET', '/search/', { target: '#pal', swap: 'innerHTML' });
+      load('/search/', '#pal');
       return;
     }
     if (e.key === 'Escape') {
@@ -108,6 +117,14 @@
     if (inner && inner !== el && el.contains(inner)) e.preventDefault();
   });
 
+  // A drawer reload that arrives after the drawer was closed or another record was opened must not bring the old one back.
+  document.addEventListener('htmx:beforeSwap', e => {
+    const h = e.detail.requestConfig && e.detail.requestConfig.headers, url = h && h['X-Hub-Reload'];
+    if (!url) return;
+    const d = $('#drawer [data-url]');
+    if (!d || d.dataset.url !== url) e.detail.shouldSwap = false;
+  });
+
   // A drawer or dialog that is already open is re-rendered in place (tab switch, next wizard step, reload):
   // skip the opening animation so the content does not flash.
   document.addEventListener('htmx:beforeSwap', e => {
@@ -142,7 +159,7 @@
   // A shared record link lands on its list page with ?open=/records/...: open that drawer.
   document.addEventListener('DOMContentLoaded', () => {
     const url = new URLSearchParams(location.search).get('open');
-    if (url && url.startsWith('/records/')) htmx.ajax('GET', url, { target: '#drawer', swap: 'innerHTML' });
+    if (url && url.startsWith('/records/')) load(url, '#drawer');
   });
 
   // CSRF for every HTMX request
