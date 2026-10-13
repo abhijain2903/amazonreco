@@ -114,8 +114,9 @@ def match_payment(p, at=None, cfg=None):
         p.status, p.deduction_h = "matched", 0
         po = inv.po
         p.save()
-        # An earlier part payment that looked short: the invoice is now covered, so it was an instalment
-        for q in Payment.objects.filter(invoice=inv, status="short").exclude(pk=p.pk):
+        # An earlier part payment that looked short: the invoice is now covered, so it was an instalment. A line that
+        # only carried an Amazon deduction (nothing paid) is not an instalment: its deduction stands.
+        for q in Payment.objects.filter(invoice=inv, status="short", paid_h__gt=0).exclude(pk=p.pk):
             q.status, q.deduction_h = "matched", 0
             q.save(update_fields=["status", "deduction_h", "updated_at"])
             audit("po", po.po_no, f"Payment {q.payment_no} was a part payment; invoice {inv.invoice_no} is now paid in full",
@@ -125,7 +126,7 @@ def match_payment(p, at=None, cfg=None):
               action="payment", at=at)
     else:
         p.status = "short"
-        audit("po", inv.po.po_no, f"Payment {p.payment_no} short by {fmt_sar(due - p.paid_h)}"
+        audit("po", inv.po.po_no, f"Payment {p.payment_no} short by {fmt_sar(p.deduction_h or due - p.paid_h)}"
               + (f" ({p.reason})" if p.reason else ""), name="Auto-match", system=True, action="payment", at=at)
     p.save()
     return p

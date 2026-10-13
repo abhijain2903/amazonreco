@@ -48,7 +48,7 @@ class FakeAmazon:
         assert headers["x-amz-access-token"].startswith("Atza|")
         if self.fail_next:
             return self.fail_next.pop(0), {}, json.dumps({"errors": [{"code": "QuotaExceeded", "message": "slow down"}]})
-        if u.path.startswith("/finances/") and self.refuse_finance:
+        if u.path.startswith(self.refuse_finance if isinstance(self.refuse_finance, str) else "/finances/") and self.refuse_finance:
             return 403, {}, json.dumps({"errors": [{"code": "Unauthorized", "message": "Access to requested resource is denied."}]})
         if u.path == "/finances/invoices/2026-06-25/invoices":
             return 200, {}, json.dumps({"invoices": self.fin_invoices, "numOfRecords": len(self.fin_invoices)})
@@ -544,7 +544,7 @@ def test_amazon_holds_back_part_of_an_invoice_then_pays_it(fake, as_user):
     head.update(invoiceStatus="PAID", invoiceSettlementBreakdowns=[{"breakdownType": "AmountPaid", "breakdownAmount": sar(inv.total_h)}])
     amazon.sync()
     inv.refresh_from_db()
-    assert (inv.amazon_status, inv.amazon_finance_status, inv.amazon_note) == ("accepted", "PAID", "")
+    assert (inv.amazon_status, inv.amazon_finance_status, inv.amazon_note, inv.amazon_variance) == ("accepted", "PAID", "", "")
 
 
 def test_an_amazon_charge_for_an_agreement_becomes_a_checked_debit_note(fake):
@@ -602,7 +602,104 @@ def test_without_the_finance_role_everything_else_still_syncs(fake):
     fake.refuse_finance = True
     fake.orders = [order("AMZ0099A", s, fc)]
     run = amazon.sync()
-    assert run.ok and "1 new PO" in run.message and "finance not synced (403: needs the Finance and Accounting role)" in run.message
-    assert Notification.objects.filter(text__contains="Amazon finance data").count() == 1
+    assert run.ok and "1 new PO" in run.message and "invoice status not synced (403: needs the Finance and Accounting role)" in run.message
+    assert "remittances not synced (403" in run.message
+    assert Notification.objects.filter(text__startswith="Amazon invoice status could not be read").count() == 1
     amazon.sync()
-    assert Notification.objects.filter(text__contains="Amazon finance data").count() == 1     # once a day, not every 15 minutes
+    assert Notification.objects.filter(text__startswith="Amazon invoice status could not be read").count() == 1   # once a day
+
+
+# ---------- review fixes ----------
+def _remit(fake, uid, pno, items, status="SUCCESSFUL"):
+    fake.remits.append({"uniquePaymentId": uid, "paymentNumber": pno, "paymentDate": "2026-10-12T00:00:00Z", "remittanceStatus": status,
+                        "paymentAmount": sar(1)})
+    fake.remit_items[uid] = items
+
+
+def _line(no, h, desc=""):
+    return {"invoiceNumber": no, "totalAmount": sar(h), "netAmountPaid": sar(h), "description": desc, "invoiceType": "Standard"}
+
+
+def test_every_payment_line_gets_its_own_payment_even_with_long_numbers(fake):
+    from payments.models import Payment
+    invs = list(Invoice.objects.filter(po__stage="invoiced", payments__isnull=True).order_by("invoice_no")[:2])
+    _remit(fake, "U1", "PAYMENT-NUMBER-0000012345678", [_line(i.invoice_no, i.total_h) for i in invs] + [_line("", 5000, "a"), _line("", 7000, "b")])
+    amazon.sync()
+    got = Payment.objects.filter(remit_date__date="2026-10-12").exclude(payment_no__startswith="RMT")
+    assert got.count() == 4 and all(len(p.payment_no) <= 30 for p in got)
+    assert {p.invoice for p in got if p.invoice} == set(invs) and all(p.status == "matched" for p in got if p.invoice)
+
+
+def test_a_payment_already_uploaded_is_not_loaded_again(fake):
+    from integrations.models import AmazonRemittance
+    from payments.models import Payment
+    p = Payment.objects.filter(status="matched").first()
+    _remit(fake, "U2", p.payment_no, [_line(p.invoice_ref, p.paid_h)])
+    n = Payment.objects.count()
+    amazon.sync()
+    assert Payment.objects.count() == n
+    assert AmazonRemittance.objects.get(unique_payment_id="U2").message.startswith("Already loaded by remittance upload")
+
+
+def test_a_deduction_on_its_own_records_only_the_deduction(fake):
+    from integrations.models import AmazonCharge
+    from payments.models import Payment
+    inv = Invoice.objects.filter(po__stage="invoiced", payments__isnull=True).select_related("po").order_by("invoice_no").first()
+    AmazonCharge.objects.create(invoice_no="PPA-1", kind="PRICE_PROTECTION", po_nos=[inv.po.po_no], amount_h=50000)
+    _remit(fake, "U3", "P3", [_line("PPA-1", -50000)])
+    amazon.sync()
+    d = Payment.objects.get(payment_no="P3/" + inv.invoice_no)
+    assert (d.status, d.paid_h, d.deduction_h) == ("short", 0, 50000)
+    _remit(fake, "U4", "P4", [_line(inv.invoice_no, inv.total_h)])          # the invoice itself is paid later
+    amazon.sync()
+    assert Payment.objects.get(payment_no="P4/" + inv.invoice_no).status == "matched"
+    d.refresh_from_db()
+    assert (d.status, d.deduction_h) == ("short", 50000)                      # the deduction still stands
+
+
+def test_the_sync_does_not_undo_what_a_person_did_after_amazons_last_news(fake, as_user):
+    inv = Invoice.objects.filter(amazon_status="submitted").select_related("po").first()
+    ident = f"{inv.invoice_no}~P"
+    head = {"invoiceNumber": inv.invoice_no, "invoiceIdentifier": ident, "invoiceType": "AP_INVENTORY", "invoiceStatus": "IN_PROGRESS",
+            "invoiceAmount": sar(inv.total_h), "invoiceSettlementBreakdowns": [{"breakdownType": "PriceVariance", "breakdownAmount": sar(1000)}]}
+    fake.fin_invoices, fake.fin_items[ident] = [head], []
+    amazon.sync()
+    inv.refresh_from_db()
+    assert inv.amazon_status == "on_hold"
+    as_user("priya").post(f"/pos/{inv.po.po_no}/invoice/resubmit/", {"invoice_no": inv.invoice_no})
+    inv.refresh_from_db()
+    assert (inv.amazon_status, inv.revision) == ("submitted", 1)
+    amazon.sync()                                     # Amazon says the same as before: the resubmission stands
+    inv.refresh_from_db()
+    assert (inv.amazon_status, inv.revision) == ("submitted", 1)
+
+
+def test_finance_catches_up_after_a_refusal_and_remittances_do_not_depend_on_invoices(fake):
+    from payments.models import Payment
+    inv = Invoice.objects.filter(po__stage="invoiced", payments__isnull=True).order_by("invoice_no").first()
+    fake.refuse_finance = "/finances/invoices"
+    _remit(fake, "U5", "P5", [_line(inv.invoice_no, inv.total_h)])
+    first = timezone.now()
+    run = amazon.sync()
+    assert "invoice status not synced" in run.message and Payment.objects.filter(payment_no="P5/" + inv.invoice_no).exists()
+    fake.refuse_finance = False
+    fake.calls.clear()
+    amazon.sync()
+    since = next(q["invoicesModifiedAfter"] for m, path, q in fake.calls if path == "/finances/invoices/2026-06-25/invoices")
+    assert parse_iso(since) < first - timedelta(days=29)                     # not just since the last (failed) pass
+
+
+def parse_iso(v):
+    from datetime import datetime
+    return datetime.fromisoformat(v.replace("Z", "+00:00"))
+
+
+def test_one_bad_record_does_not_stop_the_others(fake):
+    a, b = list(Invoice.objects.filter(amazon_status="submitted").order_by("invoice_no")[:2])
+    bad = {"invoiceNumber": a.invoice_no, "invoiceType": "AP_INVENTORY", "invoiceStatus": "REJECTED", "invoiceAmount": sar(1)}   # no identifier
+    good = {"invoiceNumber": b.invoice_no, "invoiceIdentifier": "B~1", "invoiceType": "AP_INVENTORY", "invoiceStatus": "PAID", "invoiceAmount": sar(1)}
+    fake.fin_invoices = [bad, good]
+    run = amazon.sync()
+    b.refresh_from_db()
+    assert run.ok and b.amazon_status == "accepted"
+    assert Notification.objects.filter(text__startswith=f"Amazon invoice {a.invoice_no} could not be loaded").exists()

@@ -13,6 +13,7 @@ Finance Remittance API (2026-03-17)
 Both APIs are vendor APIs needing the "Finance and Accounting" role. They are new; if Amazon refuses them for the
 account, the rest of the sync carries on and uploads keep working.
 """
+import hashlib
 import logging
 import re
 from collections import OrderedDict
@@ -24,6 +25,7 @@ from django.utils import timezone
 from core.services import audit, fmt_sar, notify
 
 from .amazon import SYSTEM, parse_dt, vendor_codes
+from .spapi import SpApiError
 
 log = logging.getLogger("hub.amazon")
 
@@ -69,11 +71,23 @@ def pull_invoices(client, since):
     for h in client.finance_invoices(since):
         if not _ours(h.get("relatedIdentifiers")):
             continue
-        if h.get("invoiceType") == "AP_INVENTORY":
-            changed += _invoice_status(h, client)
-        else:
-            charges += _charge(h, client)
+        try:
+            with transaction.atomic():      # one bad record must not stop the others (or roll them back)
+                if h.get("invoiceType") == "AP_INVENTORY":
+                    changed += _invoice_status(h, client)
+                else:
+                    charges += _charge(h, client)
+        except SpApiError:
+            raise
+        except Exception as e:                # noqa: BLE001 — logged and reported, the next record carries on
+            _skip("invoice", h.get("invoiceNumber"), e)
     return changed, charges
+
+
+def _skip(what, ref, e):
+    log.exception("Amazon %s %s could not be loaded", what, ref)
+    from .amazon import _notify_once
+    _notify_once(f"Amazon {what} {ref} could not be loaded: {type(e).__name__}: {e}"[:250], ("conn", "amazon_vc", ""))
 
 
 def _variance_text(items):
@@ -103,28 +117,33 @@ def _invoice_status(h, client):
     from billing.models import Invoice
     from payments.models import Payment
     from payments.services import find_invoice
-    inv = find_invoice(h.get("invoiceNumber", ""))
-    if not inv:
+    found = find_invoice(h.get("invoiceNumber", ""))
+    if not found:
         return 0
     st = h.get("invoiceStatus", "")
     settle = {b.get("breakdownType"): cur_h(b.get("breakdownAmount")) for b in h.get("invoiceSettlementBreakdowns") or []}
     variance = bool(settle.get("QuantityVarianceAmount") or settle.get("PriceVariance"))
-    why = inv.amazon_variance
+    why = ""                                  # Amazon's current reason only: a reason it no longer gives is cleared
     if st == "REJECTED" or variance:
-        _, items = client.finance_invoice(h["invoiceIdentifier"])
-        why = _variance_text(items) or why
+        _, items = client.finance_invoice(h["invoiceIdentifier"])      # outside the lock: Amazon may be slow
+        why = _variance_text(items)
     new = {"REJECTED": "rejected"}.get(st) or ("on_hold" if st == "IN_PROGRESS" and variance else ("accepted" if st in PAID_STATES else None))
-    before = (inv.amazon_status, inv.amazon_finance_status, inv.amazon_variance, inv.amazon_settlement)
-    inv.amazon_finance_status, inv.amazon_settlement, inv.amazon_variance = st[:20], settle, (why or "")[:300]
-    status_changed = new and new != inv.amazon_status
-    if status_changed:
-        inv.amazon_status = new
-        inv.amazon_note = ("" if new == "accepted" else (why or ("Rejected by Amazon" if new == "rejected" else "Price or quantity variance")))[:200]
-    if (inv.amazon_status, inv.amazon_finance_status, inv.amazon_variance, inv.amazon_settlement) == before:
-        return 0
     with transaction.atomic():
+        inv = Invoice.objects.select_for_update().select_related("po").get(pk=found.pk)
+        news = (st[:20], settle) != (inv.amazon_finance_status, inv.amazon_settlement)
+        if not news and why[:300] == inv.amazon_variance:
+            return 0
+        inv.amazon_finance_status, inv.amazon_settlement, inv.amazon_variance = st[:20], settle, why[:300]
+        # Only news from Amazon moves the hub status: a person's later "hold released" or resubmission stands until
+        # Amazon reports something new about the invoice.
+        status_changed = bool(news and new and new != inv.amazon_status)
+        fields = ["amazon_finance_status", "amazon_settlement", "amazon_variance", "version", "updated_at"]
+        if status_changed:
+            inv.amazon_status = new
+            inv.amazon_note = ("" if new == "accepted" else (why or ("Rejected by Amazon" if new == "rejected" else "Price or quantity variance")))[:200]
+            fields += ["amazon_status", "amazon_note"]
         inv.bump()
-        inv.save()
+        inv.save(update_fields=fields)
         if status_changed:
             text = {"accepted": f"Amazon accepted invoice {inv.invoice_no} ({st.lower().replace('_', ' ')})",
                     "on_hold": f"Amazon is holding back part of invoice {inv.invoice_no}: {inv.amazon_note}",
@@ -167,7 +186,9 @@ def _debit_note(c, items):
     from catalog.models import resolve_sku
     from debitnotes.models import DebitNote
     from debitnotes.services import create_dn, notify_status
-    if len(c.invoice_no) > 30 or DebitNote.objects.filter(dn_no=c.invoice_no).exists():
+    if (len(c.invoice_no) > DebitNote._meta.get_field("dn_no").max_length
+            or len(c.agreement_ids[0]) > DebitNote._meta.get_field("agreement_no").max_length
+            or DebitNote.objects.filter(dn_no=c.invoice_no).exists()):
         return
     lines = []
     for it in items:
@@ -198,24 +219,41 @@ def pull_remittances(client, start, end):
     from .models import AmazonRemittance
     n = 0
     for hd in client.remittances(start, end):
-        uid = str(hd.get("uniquePaymentId") or "")
+        uid = str(hd.get("uniquePaymentId") or "")[:40]
         if not uid or AmazonRemittance.objects.filter(unique_payment_id=uid, loaded=True).exists():
             continue
         if not _ours(hd.get("relatedIdentifiers")):
             continue
-        rec, _ = AmazonRemittance.objects.update_or_create(unique_payment_id=uid, defaults=dict(
-            payment_no=str(hd.get("paymentNumber") or uid)[:40], payment_date=parse_dt(hd.get("paymentDate")),
-            amount_h=cur_h(hd.get("paymentAmountInInvoiceCurrency") or hd.get("paymentAmount")), status=(hd.get("remittanceStatus") or "")[:12],
-            vendor_code=(related(hd.get("relatedIdentifiers"), "VENDOR_CODE") or [""])[0][:12]))
-        if rec.status != "SUCCESSFUL":         # in progress: loaded on a later pass; failed: never paid
-            continue
-        header, items = client.remittance(uid)
-        with transaction.atomic():
-            rec.message = load_remittance(rec, items)[:300]
-            rec.lines, rec.loaded = len(items), True
-            rec.save()
-        n += 1
+        try:
+            with transaction.atomic():
+                n += _remittance(client, uid, hd)
+        except SpApiError:
+            raise
+        except Exception as e:                # noqa: BLE001
+            _skip("payment", hd.get("paymentNumber") or uid, e)
     return n
+
+
+def _remittance(client, uid, hd):
+    from payments.models import Payment
+    from .models import AmazonRemittance
+    rec, _ = AmazonRemittance.objects.update_or_create(unique_payment_id=uid, defaults=dict(
+        payment_no=str(hd.get("paymentNumber") or uid)[:40], payment_date=parse_dt(hd.get("paymentDate")),
+        amount_h=cur_h(hd.get("paymentAmountInInvoiceCurrency") or hd.get("paymentAmount")), status=(hd.get("remittanceStatus") or "")[:12],
+        vendor_code=(related(hd.get("relatedIdentifiers"), "VENDOR_CODE") or [""])[0][:12]))
+    if rec.status != "SUCCESSFUL":         # in progress: loaded on a later pass; failed: never paid
+        return 0
+    if Payment.objects.filter(payment_no=rec.payment_no).exists():
+        # Already in the hub from the remittance upload (U6 keeps Amazon's payment number): loading it again would
+        # count the invoices as paid twice.
+        rec.loaded, rec.message = True, "Already loaded by remittance upload (U6)"
+        rec.save()
+        return 0
+    header, items = client.remittance(uid)
+    rec.message = load_remittance(rec, items)[:300]
+    rec.lines, rec.loaded = len(items), True
+    rec.save()
+    return 1
 
 
 def load_remittance(rec, items):
@@ -229,8 +267,9 @@ def load_remittance(rec, items):
         net, total = cur_h(it.get("netAmountPaid")), cur_h(it.get("totalAmount"))
         inv = find_invoice(num) if num else None
         if inv:
-            b = buckets.setdefault(inv.invoice_no, {"paid": 0, "why": []})
+            b = buckets.setdefault(inv.invoice_no, {"paid": 0, "ded": 0, "pays": False, "why": []})
             b["paid"] += net
+            b["pays"] = True
             disc = next((cur_h(x.get("breakdownAmount")) for x in it.get("netAmountPaidBreakdown") or [] if x.get("breakdownType") == "TermsDiscountTaken"), 0)
             if disc:
                 b["why"].append(f"Payment terms discount {fmt_sar(abs(disc))}")
@@ -238,20 +277,26 @@ def load_remittance(rec, items):
         if net < 0 or total < 0:
             target, why = _place_deduction(num, it)
             if target:
-                b = buckets.setdefault(target.invoice_no, {"paid": 0, "why": []})
+                b = buckets.setdefault(target.invoice_no, {"paid": 0, "ded": 0, "pays": False, "why": []})
                 b["paid"] += net
+                b["ded"] += -min(net, total, 0)
                 b["why"].append(why)
                 continue
             loose.append((num, net, why))
         else:
             loose.append((num, net, (it.get("description") or "")[:200]))
-    made, todo = [], []
+    made, todo, used = [], [], set()
     for inv_no, b in buckets.items():
-        p = _payment(f"{rec.payment_no}/{inv_no}", rec, inv_no, b["paid"], "; ".join(b["why"]))
+        if b["pays"]:
+            p = _payment(_key(rec.payment_no, inv_no, used), rec, inv_no, b["paid"], "; ".join(b["why"]))
+        else:
+            # Only Amazon's deduction reached this invoice in this payment (the invoice is paid in another one): record
+            # the deduction itself, not the whole invoice as unpaid.
+            p = _payment(_key(rec.payment_no, inv_no, used), rec, inv_no, 0, "; ".join(b["why"]), deduction_h=b["ded"])
         if p:
             made.append(p)
-    for num, net, why in loose:
-        p = _payment(f"{rec.payment_no}/{num or 'line'}", rec, num or rec.payment_no, net, why)
+    for i, (num, net, why) in enumerate(loose, 1):
+        p = _payment(_key(rec.payment_no, num or f"line{i}", used), rec, num or rec.payment_no, net, why)
         if p:
             made.append(p)
     for p in made:
@@ -265,13 +310,25 @@ def load_remittance(rec, items):
     return f"{len(made)} payment line{'s' if len(made) != 1 else ''}: {m} matched, {s} short-paid, {len(made) - m - s} to match"
 
 
-def _payment(no, rec, ref, paid_h, reason):
+def _key(payment_no, ref, used):
+    """A hub payment number for one line: <payment>/<invoice>, unique within the payment and at most 30 characters
+    (a long one keeps its start and gets a short fingerprint, so two lines never collapse into one)."""
+    key = f"{payment_no}/{ref}"
+    n = 2
+    while key in used:
+        key, n = f"{payment_no}/{ref}#{n}", n + 1
+    used.add(key)
+    if len(key) > 30:
+        key = f"{key[:21]}~{hashlib.sha1(key.encode()).hexdigest()[:8]}"
+    return key
+
+
+def _payment(no, rec, ref, paid_h, reason, deduction_h=0):
     from payments.models import Payment
     from payments.services import import_payment
-    no = no[:30]
-    if Payment.objects.filter(payment_no=no).exists():
+    if Payment.objects.filter(payment_no=no).exists():          # loaded before (same payment, same line)
         return None
-    return import_payment(no, rec.payment_date or timezone.now(), ref[:40], paid_h, 0, (reason or "")[:200])
+    return import_payment(no, rec.payment_date or timezone.now(), ref[:40], paid_h, deduction_h, (reason or "")[:200])
 
 
 def _place_deduction(num, it):

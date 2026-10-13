@@ -104,7 +104,7 @@ R12 = global tolerance (SAR 1). BRD worked example used in seed and tests: 180 u
   and variance reasons (holds / rejections set automatically); Amazon's charges (price protection, damage allowance, co-op…)
   stored with their references, and a charge with an agreement ID becomes a debit note checked by R10. If Amazon refuses
   these APIs for the account, the rest of the sync carries on (alert once a day) and the remittance upload still works.
-- Tests: `pytest` → 296 passed (rules, flows, uploads U1-U12, API, access matrix, matching, defects, phases A–C, review
+- Tests: `pytest` → 302 passed (rules, flows, uploads U1-U12, API, access matrix, matching, defects, phases A–C, review
   regressions, trackers, Amazon SP-API, smoke). Playwright e2e: 18 passed against a running seeded server (`test_ui` + `test_scenarios`, the real-world cases).
 - Reports page: six tabs (summary with period-on-period and money leaked/protected, orders & stock, shipping, cash &
   deductions, promotions, team speed), 12-week trends, one-workbook export. Demo seed adds realistic history for it.

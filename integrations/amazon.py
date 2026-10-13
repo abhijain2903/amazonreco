@@ -202,7 +202,14 @@ def pull_orders(client, start, end=None):
                     if key in seen:
                         continue
                     seen.add(key)
-                    outcome, text = import_order(order)
+                    try:
+                        with transaction.atomic():
+                            outcome, text = import_order(order)
+                    except SpApiError:
+                        raise
+                    except Exception as e:      # noqa: BLE001 — one bad PO must not stop the sync
+                        log.exception("Amazon PO %s could not be imported", key[0])
+                        outcome, text = "error", f"{key[0]}: {type(e).__name__}: {e}"
                     out[outcome] += 1
                     if outcome in ("error", "skipped"):
                         out["problems"].append(text)
@@ -625,15 +632,24 @@ def sync(client=None, since=None):
         return run
     # Finance (remittances, invoice status, Amazon's charges): newer vendor APIs with their own role. If Amazon refuses
     # them for this account, everything else still syncs and the remittance upload keeps working.
+    # Each has its own cursor that moves only when it succeeded, so changes made while Amazon refused them (e.g. before
+    # the Finance and Accounting role was granted) are fetched once it works.
+    from .amazon_finance import pull_invoices, pull_remittances
     remits = inv_changed = charges = 0
-    finance_note = ""
+    notes = []
+    fin = parse_dt(c.settings.get("finance_cursor"))
     try:
-        from .amazon_finance import pull_invoices, pull_remittances
-        inv_changed, charges = pull_invoices(client, start - timedelta(days=1))
-        remits = pull_remittances(client, since or (now - timedelta(days=14)), now)
-    except SpApiError as e:
-        finance_note = f"; finance not synced ({e.status or 'error'}: needs the Finance and Accounting role)" if e.status in (401, 403) else f"; finance not synced: {e}"
-        _notify_once(f"Amazon finance data (remittances, invoice status) could not be read: {e}"[:250], ("conn", "amazon_vc", ""))
+        inv_changed, charges = pull_invoices(client, since or (fin - timedelta(hours=1) if fin else now - timedelta(days=30)))
+        c.settings["finance_cursor"] = now.isoformat()
+    except Exception as e:                  # noqa: BLE001
+        notes.append(_finance_problem("invoice status", e))
+    rem = parse_dt(c.settings.get("remittance_cursor"))
+    try:
+        remits = pull_remittances(client, since or ((rem - timedelta(days=3)) if rem else now - timedelta(days=30)), now)
+        c.settings["remittance_cursor"] = now.isoformat()
+    except Exception as e:                  # noqa: BLE001
+        notes.append(_finance_problem("remittances", e))
+    finance_note = "".join(notes)
     checked = 0
     for t in AmazonTransaction.objects.filter(status="processing", sent_at__lt=now - timedelta(seconds=30)):
         try:
@@ -641,7 +657,7 @@ def sync(client=None, since=None):
             checked += 1
         except SpApiError as e:
             log.warning("transaction %s: %s", t.transaction_id, e)
-    c.settings = {**c.settings, "cursor": now.isoformat()}
+    c.settings = {**c.settings, "cursor": now.isoformat()}             # finance cursors were set above
     c.last_sync = now
     c.records_today += res["created"] + res["changed"]
     c.save(update_fields=["settings", "last_sync", "records_today", "updated_at"])
@@ -656,6 +672,16 @@ def sync(client=None, since=None):
             _notify_once(f"Amazon PO could not be imported: {p}. Add the missing master data (Settings → SKU master can look an ASIN up "
                          f"at Amazon), the next sync imports it", ("conn", "amazon_vc", ""))
     return SyncRun.objects.create(connector=c, kind="sync", ok=not res["error"], message=msg[:300], records_in=res["created"] + res["changed"])
+
+
+def _finance_problem(what, e):
+    if isinstance(e, SpApiError) and e.status in (401, 403):
+        note = f"; {what} not synced ({e.status}: needs the Finance and Accounting role)"
+    else:
+        log.exception("Amazon %s sync failed", what)
+        note = f"; {what} not synced: {type(e).__name__}: {e}"[:150]
+    _notify_once(f"Amazon {what} could not be read: {e}"[:250], ("conn", "amazon_vc", ""))
+    return note
 
 
 def _notify_once(text, link, hours=24):
