@@ -44,6 +44,21 @@ class Shipment(Base):
     slot_outcome = models.CharField(max_length=10, blank=True, help_text="missed / refused: the last appointment failed")
     slot_note = models.CharField(max_length=200, blank=True)
     reschedules = models.PositiveIntegerField(default=0)
+    # Amazon's view of the shipment (SP-API Vendor Shipments), and the collect pickup request
+    amazon_status = models.CharField(max_length=30, blank=True, help_text="Created / TransportationRequested / CarrierAssigned / Shipped")
+    amazon_status_at = models.DateTimeField(null=True, blank=True)
+    carrier = models.CharField(max_length=80, blank=True)
+    tracking_no = models.CharField(max_length=60, blank=True, help_text="Carrier PRO / tracking number")
+    estimated_delivery = models.DateTimeField(null=True, blank=True)
+    pickup_ready_at = models.DateTimeField(null=True, blank=True, help_text="When the goods are ready for Amazon to collect")
+    pallets = models.PositiveIntegerField(default=0)
+    weight_kg = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    labels_fetched = models.BooleanField(default=False)
+
+    @property
+    def amazon_status_label(self):
+        return {"Created": "Created at Amazon", "TransportationRequested": "Transport requested", "CarrierAssigned": "Carrier assigned",
+                "Shipped": "Picked up / shipped"}.get(self.amazon_status, self.amazon_status)
 
 
 class ShipmentLine(Base):

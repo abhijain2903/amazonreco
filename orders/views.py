@@ -136,7 +136,8 @@ def drawer(request, po_no):
     ctx.update(shipped=shipped_qty(po), any_bo=any(l.qty_backorder for l in lines), any_rcv=any(l.qty_received is not None for l in lines), open_units=open_qty(po) if po.stage not in ("new", "rejected", "cancelled") else 0,
                invs=list(po.invoices.order_by("seq").prefetch_related("payments", "credit_memos")),
                ships=list(po.shipments.order_by("seq")),
-               bo_eta=min((l.backorder_eta for l in lines if l.qty_backorder and l.backorder_eta), default=None))
+               bo_eta=min((l.backorder_eta for l in lines if l.qty_backorder and l.backorder_eta), default=None),
+               amazon_api=_amazon_api())
     if tab == "shipment" or po.stage == "released":
         ck = asn_checks(po, cfg)
         ctx.update(asn=ck, asn_blocked=any(not c["asn_ok"] for c in ck), asn_short=any(not c["del_ok"] for c in ck),
@@ -280,6 +281,29 @@ def slot(request, po_no):
     from core.services import peek_number
     return render(request, "dialogs/slot.html", dict(po=po, sh=sh, next_slot=f"CC{peek_number('slot', 66120)}", again=po.stage == "slot" or bool(sh.slot_outcome),
                   units=sum(l.qty for l in sh.lines.all()), day=timezone.localtime(sh.ship_date + timedelta(hours=10)).date().isoformat()))
+
+
+def _amazon_api():
+    from integrations.amazon import is_live
+    return is_live()
+
+
+def pickup(request, po_no):
+    """Ask Amazon to collect (collect freight through the SP-API): Amazon answers with its reference and pickup time."""
+    from integrations.amazon import request_pickup
+    po = get_po(po_no)
+    sh = shipment_of(po)
+    if request.method == "POST":
+        try:
+            ready = timezone.make_aware(datetime.strptime(request.POST.get("ready", ""), "%Y-%m-%dT%H:%M"))
+        except ValueError:
+            ready = None
+        request_pickup(request.user, po_no, ready, request.POST.get("pallets") or 0, request.POST.get("weight_kg") or None,
+                       request.POST.get("version"))
+        return htmx.done(request, f"Pickup requested from Amazon for {po_no}. The slot is booked when Amazon schedules it", close_modal=True)
+    ready = timezone.localtime(sh.ship_date).replace(minute=0, second=0, microsecond=0)
+    return render(request, "dialogs/pickup.html", dict(po=po, sh=sh, ready=ready.strftime("%Y-%m-%dT%H:%M"),
+                                                       units=sum(l.qty for l in sh.lines.all())))
 
 
 @require_POST

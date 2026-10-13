@@ -147,3 +147,15 @@ def amazon_sync(timestamp: int):
     if c.last_sync and now - c.last_sync < timedelta(minutes=every - 2):
         return
     amazon.sync()
+
+
+@app.periodic(cron="0 3 * * *")  # 06:00 Riyadh: Amazon's daily vendor reports are ready by then
+@app.task(queue="schedule")
+def amazon_reports(timestamp: int):
+    """Ask Amazon for the day's vendor reports (sales, inventory, forecast, margin, promotion and coupon performance).
+    The sync passes load them as soon as Amazon has prepared them."""
+    from integrations import amazon
+    from integrations.amazon_reports import request_all
+    from integrations.spapi import Client
+    if amazon.is_live() and Client.configured():
+        request_all()

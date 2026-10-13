@@ -57,7 +57,7 @@ def trackers(request, view):
         f.update(year=year, status=g.get("status", "") if g.get("status", "") in dict(Sku._meta.get_field("lifecycle").choices) else "")
         f.pop("vc")
         cols, rows, meta = T.sellout_tracker(**f)
-        me_cols, name = len(cols) - 2, "Sellout_tracker"
+        me_cols, name = len(cols) - T.SELLOUT_EXTRA, "Sellout_tracker"
     else:
         f.update(status=htmx.pick(request, "status", ["all", "pending", "submitted"], "all"))
         cols, rows = T.claim_tracker(status=f["status"] if f["status"] != "all" else "", vc=f["vc"], cat=f["cat"])
@@ -327,7 +327,12 @@ def sku_drawer(request, key):
     promos = Promotion.objects.filter(lines__sku=s).distinct()
     return render(request, "records/sku.html", {"s": s, "pos": [(p, p.lines.filter(sku=s).first()) for p in pos],
                                                 "promos": [(p, p.lines.filter(sku=s).first()) for p in promos],
-                                                "url": request.get_full_path()})
+                                                "url": request.get_full_path(), "amazon_api": _amazon_api()})
+
+
+def _amazon_api():
+    from integrations.amazon import is_live
+    return is_live()
 
 
 @require_POST
@@ -532,6 +537,7 @@ def settings_page(request):
                           ("Claim number", "CLM-{YYYY}-{0000}", f"CLM-2026-{peek_number('claim', 88):04d}"),
                           ("Dispute case", "DSP-{0000}", f"DSP-{peek_number('dispute', 41):04d}"),
                           ("ME invoice number", "MEI-{YYYY}-{00000}", f"MEI-2026-{peek_number('invoice', 4310):05d}")]
+    ctx["amazon_api"] = _amazon_api()
     return render(request, "pages/settings.html", ctx)
 
 

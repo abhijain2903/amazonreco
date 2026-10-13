@@ -1,11 +1,13 @@
 """Amazon Selling Partner API client for vendors (retail procurement).
 
-Covers the four APIs ME uses: Vendor Orders, Vendor Shipments, Vendor Invoices and Vendor Transaction Status
+Covers the APIs ME uses: Vendor Orders, Vendor Shipments, Vendor Invoices, Vendor Transaction Status, Reports
+(vendor sales / inventory / forecasting / margin, promotion and coupon performance) and Catalog Items
 (models: github.com/amzn/selling-partner-api-models). Calls carry a Login with Amazon access token, obtained from the
 app's refresh token; request signing (SigV4) is no longer required by Amazon.
 
 The HTTP transport is a plain function so tests replace it; nothing here touches the database.
 """
+import gzip
 import json
 import logging
 import time
@@ -39,9 +41,16 @@ def urllib_transport(method, url, headers, body=None, timeout=30):
         return e.code, dict(e.headers or {}), e.read().decode(errors="replace")
 
 
+def urllib_download(url, timeout=120):
+    """Bytes of a report document (a presigned link: no Amazon headers)."""
+    with urllib.request.urlopen(urllib.request.Request(url, method="GET"), timeout=timeout) as r:
+        return r.read()
+
+
 class Client:
-    def __init__(self, transport=None, sleep=time.sleep):
+    def __init__(self, transport=None, sleep=time.sleep, download=None):
         self.transport = transport or urllib_transport
+        self.download = download or urllib_download
         self.sleep = sleep
         self.endpoint = settings.SPAPI_ENDPOINT.rstrip("/")
         self._token, self._expires = None, 0
@@ -129,9 +138,50 @@ class Client:
     def submit_shipment_confirmations(self, confirmations):
         return _txid(self.call("POST", "/vendor/shipping/v1/shipmentConfirmations", body={"shipmentConfirmations": confirmations}))
 
+    def shipment_details(self, **params):
+        """GetShipmentDetails, every page: Amazon's status, carrier and pickup for shipments."""
+        return self._pages("/vendor/shipping/v1/shipments", {"limit": 50, **params}, "shipments")
+
+    def submit_shipments(self, shipments):
+        """SubmitShipments: a collect (Amazon-arranged) transportation request."""
+        return _txid(self.call("POST", "/vendor/shipping/v1/shipments", body={"shipments": shipments}))
+
+    def shipment_labels(self, **params):
+        return self._pages("/vendor/shipping/v1/transportLabels", {"limit": 50, **params}, "transportLabels")
+
     # ---------- Vendor Invoices ----------
     def submit_invoices(self, invoices):
         return _txid(self.call("POST", "/vendor/payments/v1/invoices", body={"invoices": invoices}))
+
+    # ---------- Reports ----------
+    def create_report(self, report_type, start=None, end=None, options=None):
+        body = {"reportType": report_type, "marketplaceIds": [settings.SPAPI_MARKETPLACE_ID]}
+        if start:
+            body["dataStartTime"] = _param(start)
+        if end:
+            body["dataEndTime"] = _param(end)
+        if options:
+            body["reportOptions"] = options
+        rid = self.call("POST", "/reports/2021-06-30/reports", body=body).get("reportId")
+        if not rid:
+            raise SpApiError("Amazon did not return a report ID.")
+        return rid
+
+    def report(self, report_id):
+        return self.call("GET", f"/reports/2021-06-30/reports/{urllib.parse.quote(report_id)}")
+
+    def report_json(self, document_id):
+        """The report document, downloaded and unzipped, as JSON (vendor reports are JSON)."""
+        doc = self.call("GET", f"/reports/2021-06-30/documents/{urllib.parse.quote(document_id)}")
+        raw = self.download(doc["url"])
+        if doc.get("compressionAlgorithm") == "GZIP":
+            raw = gzip.decompress(raw)
+        return json.loads(raw.decode("utf-8-sig"))
+
+    # ---------- Catalog Items ----------
+    def catalog_item(self, asin):
+        return self.call("GET", f"/catalog/2022-04-01/items/{urllib.parse.quote(asin)}",
+                         {"marketplaceIds": settings.SPAPI_MARKETPLACE_ID, "includedData": "summaries,identifiers,vendorDetails"})
 
     # ---------- Vendor Transaction Status ----------
     def transaction(self, transaction_id):

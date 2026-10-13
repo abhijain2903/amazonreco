@@ -89,7 +89,15 @@ R12 = global tolerance (SAR 1). BRD worked example used in seed and tests: 180 u
   (`HUB_SPAPI_CLIENT_ID / _CLIENT_SECRET / _REFRESH_TOKEN`, optional `HUB_SPAPI_SANDBOX=true`); vendor codes, ship-from ID
   and VAT number on the connector. Backfill: `mehub-manage amazon_sync --days 180`. Tested against a fake Amazon only —
   **not yet against Amazon** (needs ME's app and refresh token).
-- Tests: `pytest` → 286 passed (rules, flows, uploads U1-U12, API, access matrix, matching, defects, phases A–C, review
+- SP-API, second batch (`integrations/amazon_reports.py` + `amazon.py`): Reports API daily at 06:00 Riyadh — vendor sales
+  (sell-out net of returns, by day), inventory (stock on hand), forecasting (weekly mean → month), net pure product margin
+  (sell-out tracker column), promotion and coupon performance (units at the promotional price set the lines' sold units
+  for R10 once the promotion ended; shown on the promotion). Vendor Shipments: "Ask Amazon to collect" (SubmitShipments,
+  collect freight) — Amazon's ARN and pickup time book the slot by themselves; GetShipmentDetails shows Amazon's status,
+  carrier and tracking; small-parcel labels (GetShipmentLabels) saved to the PO's Documents. Catalog Items: "Check at
+  Amazon" on the SKU drawer and "Look up this ASIN" on the SKU form. Not built: SP-API Notifications (needs an AWS SQS /
+  EventBridge destination — a new AWS resource; the daily reports cover the same data).
+- Tests: `pytest` → 292 passed (rules, flows, uploads U1-U12, API, access matrix, matching, defects, phases A–C, review
   regressions, trackers, Amazon SP-API, smoke). Playwright e2e: 18 passed against a running seeded server (`test_ui` + `test_scenarios`, the real-world cases).
 - Reports page: six tabs (summary with period-on-period and money leaked/protected, orders & stock, shipping, cash &
   deductions, promotions, team speed), 12-week trends, one-workbook export. Demo seed adds realistic history for it.
@@ -128,7 +136,8 @@ Live since 28 Sep 2026 at **https://amazonhub.iksulalive.com** on AWS EC2 `i-00c
    Order Tracking; Brand Analytics for reports), authorises it for every vendor code, gives the client ID / secret /
    refresh token for `/etc/mehub/mehub.env`; then Test connection, try `HUB_SPAPI_SANDBOX=true` first, set vendor codes,
    ship-from party ID and VAT number, switch the connector to API, run `amazon_sync --days 180`. Still by upload: remittance,
-   debit notes, returns (no vendor SP-API for them). Next: Reports API for U11 / U12 (sales, inventory, forecast).
+   debit notes, returns (no vendor SP-API for them). The app also needs the Brand Analytics role for the reports.
+   `amazon_sync --reports` asks for the day's reports at once.
    Other live integrations behind the adapters (`integrations/connectors.py`): SAP OData (S/4) or IDoc/BAPI (ECC);
    Salesforce order log; Microsoft 365 / SMTP email for alerts.
 4. Small follow-ups: one-click "Add to SKU master" from a rejected PO row; partial credit release if ME uses it.

@@ -98,3 +98,25 @@ def amazon_resend(request, pk):
     from .amazon import resend
     t = resend(request.user, pk)
     return htmx.done(request, f"{t.get_kind_display()} {t.ref} queued to send to Amazon again")
+
+
+def amazon_catalog(request):
+    """What Amazon's catalog says about an ASIN (SKU master: check a SKU, or look up an ASIN before adding it)."""
+    from catalog.models import Sku
+
+    from .amazon import catalog_lookup, is_live
+    from .spapi import Client, SpApiError
+    asin = (request.GET.get("asin") or "").strip().upper()
+    sku = Sku.objects.filter(sku_code=request.GET.get("sku", "")).first()
+    asin = asin or (sku.asin if sku else "")
+    ctx = dict(asin=asin, sku=sku)
+    if not asin:
+        ctx["error"] = "Type the ASIN first."
+    elif not is_live() or not Client.configured():
+        ctx["error"] = "Amazon is not connected by API, so the catalog cannot be checked from here."
+    else:
+        try:
+            ctx["item"] = catalog_lookup(asin, sku)
+        except SpApiError as e:
+            ctx["error"] = "Not found in Amazon.sa's catalog." if e.status == 404 else f"Amazon refused the lookup: {e}"
+    return render(request, "partials/amazon_catalog.html", ctx)

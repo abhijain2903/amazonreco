@@ -17,6 +17,7 @@ urlpatterns = [
     path("<str:po_no>/sync-delivery/", views.sync_delivery),
     path("<str:po_no>/asn/", views.submit_asn),
     path("<str:po_no>/slot/", views.slot),
+    path("<str:po_no>/pickup/", views.pickup),
     path("<str:po_no>/slot-failed/", views.slot_failed),
     path("<str:po_no>/deliver/", views.deliver),
     path("<str:po_no>/fix-billing/", views.fix_billing),

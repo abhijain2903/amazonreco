@@ -1,0 +1,14 @@
+{% extends "dialogs/_modal.html" %}
+{% block size %}sm{% endblock %}{% block label %}Ask Amazon to collect{% endblock %}
+{% block mtitle %}Ask Amazon to collect{% endblock %}
+{% block msub %}<p>PO {{ po.po_no }} · ASN {{ sh.asn_no }} · to {{ po.fc.code }}</p>{% endblock %}
+{% block form_open %}<form hx-post="/pos/{{ po.po_no }}/pickup/" hx-swap="none"><input type="hidden" name="version" value="{{ po.version }}">{% endblock %}
+{% block mbody %}
+<p class="small muted">Collect freight: Amazon arranges the truck. The hub sends the request with every carton's SSCC; Amazon's reference (ARN), pickup time and carrier come back by themselves and book the slot.</p>
+<div class="fgrid"><div class="field"><label for="pk-ready">Ready for pickup</label><input class="inp" type="datetime-local" id="pk-ready" name="ready" value="{{ ready }}" required></div>
+<div class="field"><label for="pk-pal">Pallets</label><input class="inp" type="number" min="0" id="pk-pal" name="pallets" value="{{ sh.pallets|default:0 }}"></div>
+<div class="field"><label for="pk-kg">Total weight (kg)</label><input class="inp" type="number" min="0" step="0.1" id="pk-kg" name="weight_kg" value="{{ sh.weight_kg|default_if_none:'' }}"></div></div>
+<div class="kv2"><div><span>Cartons</span><b>{{ sh.cartons }}</b></div><div><span>Units</span><b>{{ units|num }}</b></div><div><span>Truck ships</span><b>{{ sh.ship_date|fdt }}</b></div></div>
+{% endblock %}
+{% block mfoot %}<span class="hint"></span><button type="button" class="btn" data-close="modal">Cancel</button><button class="btn pri" type="submit" {% perm 'ship' %}>Send pickup request</button>{% endblock %}
+{% block form_close %}</form>{% endblock %}

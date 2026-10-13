@@ -145,6 +145,7 @@ def drawer(request, ref):
                       dict(id="timeline", label="Timeline"), dict(id="notes", label="Notes", n=Note.objects.filter(entity="promo", entity_id=p.mecl_ref).count()),
                       dict(id="docs", label="Documents")])
     lines = ctx["lines"]
+    ctx.update(amazon_perf=list(p.amazon_reports.all()))
     ctx.update(exp_units=sum(l.expected_units for l in lines), missing_sold=any(l.sold_units is None for l in lines),
                sold_units=None if any(l.sold_units is None for l in lines) else sum(l.sold_units for l in lines),
                pre_stages=["draft", "submitted", "approved", "live", "rejected"])

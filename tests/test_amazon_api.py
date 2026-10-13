@@ -29,6 +29,12 @@ class FakeAmazon:
         self.tx_errors = {}
         self.fail_next = []          # status codes to answer before the real answer (429 throttling …)
         self.tokens = 0
+        self.reports, self.report_docs, self.report_status = {}, {}, {}   # reportId -> type; type -> document; type -> status
+        self.shipments, self.labels, self.catalog = {}, {}, {}           # by vendorShipmentIdentifier / ASIN
+
+    def download(self, url, timeout=120):
+        import gzip
+        return gzip.compress(json.dumps(self.report_docs[self.reports[url.rsplit("/", 1)[1]]]).encode())
 
     def __call__(self, method, url, headers, body=None, timeout=30):
         u = urllib.parse.urlparse(url)
@@ -51,6 +57,28 @@ class FakeAmazon:
             return 200, {}, json.dumps({"payload": page})
         if u.path == "/vendor/orders/v1/purchaseOrdersStatus":
             return 200, {}, json.dumps({"payload": {"ordersStatus": self.statuses}})
+        if u.path == "/reports/2021-06-30/reports" and method == "POST":
+            b = json.loads(body)
+            rid = f"R{len(self.reports) + 1}"
+            self.reports[rid] = b["reportType"]
+            self.sent.append((u.path, b))
+            return 202, {}, json.dumps({"reportId": rid})
+        if u.path.startswith("/reports/2021-06-30/reports/"):
+            rid = u.path.rsplit("/", 1)[1]
+            st = self.report_status.get(self.reports[rid], "DONE")
+            return 200, {}, json.dumps({"reportId": rid, "processingStatus": st, **({"reportDocumentId": rid} if st == "DONE" else {})})
+        if u.path.startswith("/reports/2021-06-30/documents/"):
+            rid = u.path.rsplit("/", 1)[1]
+            return 200, {}, json.dumps({"reportDocumentId": rid, "url": f"https://s3.example/{rid}", "compressionAlgorithm": "GZIP"})
+        if u.path == "/vendor/shipping/v1/shipments" and method == "GET":
+            return 200, {}, json.dumps({"payload": {"shipments": self.shipments.get(q.get("vendorShipmentIdentifier"), [])}})
+        if u.path == "/vendor/shipping/v1/transportLabels":
+            return 200, {}, json.dumps({"payload": {"transportLabels": self.labels.get(q.get("vendorShipmentIdentifier"), [])}})
+        if u.path.startswith("/catalog/2022-04-01/items/"):
+            asin = u.path.rsplit("/", 1)[1]
+            if asin not in self.catalog:
+                return 404, {}, json.dumps({"errors": [{"code": "NOT_FOUND", "message": f"Requested item '{asin}' not found"}]})
+            return 200, {}, json.dumps(self.catalog[asin])
         if method == "POST":
             tid = f"tx-{len(self.sent) + 1}"
             self.sent.append((u.path, json.loads(body)))
@@ -72,6 +100,7 @@ def fake(settings, monkeypatch):
     settings.SPAPI_CLIENT_ID, settings.SPAPI_CLIENT_SECRET, settings.SPAPI_REFRESH_TOKEN = "amzn1.application-oa2-client.x", "s", "Atzr|r"
     f = FakeAmazon()
     monkeypatch.setattr("integrations.spapi.urllib_transport", f)
+    monkeypatch.setattr("integrations.spapi.urllib_download", f.download)
     from integrations.connectors import ensure_connectors
     ensure_connectors()
     c = Connector.objects.get(key="amazon_vc")
@@ -321,3 +350,148 @@ def test_connection_test_and_connector_panel(fake, as_user, settings):
     settings.SPAPI_CLIENT_SECRET = ""
     ok, msg = amazon.test_connection()
     assert not ok and "HUB_SPAPI_CLIENT_SECRET" in msg
+
+
+# ---------- Reports API ----------
+def _report_docs(skus, promo, coupon_promo):
+    a, b = skus[0].asin, skus[1].asin
+    y = (timezone.localdate() - timedelta(days=1)).isoformat()
+    m = timezone.localdate().replace(day=1)
+    return {
+        "GET_VENDOR_SALES_REPORT": {"reportSpecification": {}, "salesAggregate": [], "salesByAsin": [
+            {"asin": a, "startDate": y, "endDate": y, "shippedUnits": 12, "customerReturns": 2, "shippedCogs": {}, "shippedRevenue": {}},
+            {"asin": "B0UNKNOWN1", "startDate": y, "endDate": y, "shippedUnits": 5, "shippedCogs": {}, "shippedRevenue": {}}]},
+        "GET_VENDOR_INVENTORY_REPORT": {"reportSpecification": {}, "inventoryAggregate": [], "inventoryByAsin": [
+            {"asin": a, "startDate": y, "endDate": y, "sellableOnHandInventoryUnits": 37}]},
+        "GET_VENDOR_FORECASTING_REPORT": {"reportSpecification": {}, "forecastByAsin": [
+            {"forecastGenerationDate": "2026-01-01", "asin": a, "startDate": m.isoformat(), "meanForecastUnits": 99},          # an older run
+            {"forecastGenerationDate": "2026-02-01", "asin": a, "startDate": m.isoformat(), "meanForecastUnits": 10.4},
+            {"forecastGenerationDate": "2026-02-01", "asin": a, "startDate": (m + timedelta(days=7)).isoformat(), "meanForecastUnits": 20.2}]},
+        "GET_VENDOR_NET_PURE_PRODUCT_MARGIN_REPORT": {"reportSpecification": {}, "netPureProductMarginAggregate": [],
+                                                     "netPureProductMarginByAsin": [{"asin": b, "startDate": "2026-09-01", "netPureProductMargin": 0.1234}]},
+        "GET_PROMOTION_PERFORMANCE_REPORT": {"reportSpecification": {}, "promotions": [{
+            "promotionId": "PRM-1", "promotionName": "Deal", "vendorCode": "MEAUD", "fundingAgreementId": promo.agreement_no,
+            "unitsSold": 41, "amountSpent": 2050.5, "revenue": 9000, "startDateTime": "2026-01-01T00:00:00Z",
+            "endDateTime": "2026-01-05T00:00:00Z", "status": "ENDED", "includedProducts": [
+                {"asin": l.sku.asin, "productUnitsSold": 40 + i, "productAmountSpent": 1000} for i, l in enumerate(promo.lines.select_related("sku"))]}]},
+        "GET_COUPON_PERFORMANCE_REPORT": {"reportSpecification": {}, "campaigns": [{
+            "campaignId": "C1", "campaignName": "Coupons", "vendorCode": "MEVIS", "coupons": [{
+                "couponId": "CPN-1", "name": "10% off", "startDateTime": coupon_promo.start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "endDateTime": coupon_promo.end.strftime("%Y-%m-%dT%H:%M:%SZ"), "redemptions": 17, "budgetSpent": 340,
+                "asins": [{"asin": coupon_promo.lines.select_related("sku").first().sku.asin}]}]}]},
+    }
+
+
+def test_daily_reports_fill_sellout_stock_forecast_margin_and_promotion_units(fake):
+    from catalog.models import AmazonStock, Forecast, ProductMargin, SellOut
+    from core import trackers
+    from integrations.amazon_reports import request_all
+    from integrations.models import AmazonPromoPerformance, AmazonReport
+    from promotions.models import Promotion
+    skus = list(Sku.objects.filter(active=True).order_by("sku_code")[:2])
+    ended = Promotion.objects.filter(agreement_no__isnull=False, end__lt=timezone.now()).order_by("mecl_ref")
+    promo, cp = ended[0], ended[1]
+    promo.lines.update(sold_units=None)
+    cp.promo_type = "coupon"
+    cp.save()
+    cp.lines.update(sold_units=None)
+    fake.report_docs = _report_docs(skus, promo, cp)
+    made = request_all()
+    assert sorted(r.report_type for r in made) == sorted(fake.report_docs) and all(r.report_id for r in made)
+    sales_req = next(b for p, b in fake.sent if b.get("reportType") == "GET_VENDOR_SALES_REPORT")
+    assert sales_req["marketplaceIds"] == ["A17E79C6D8DWNP"] and sales_req["reportOptions"]["reportPeriod"] == "DAY"
+    run = amazon.sync()
+    assert "6 reports loaded" in run.message, run.message
+    y = timezone.localdate() - timedelta(days=1)
+    assert SellOut.objects.get(sku=skus[0], day=y).units == 10                       # net of returns
+    assert AmazonStock.objects.get(sku=skus[0], as_of=y).units == 37
+    assert Forecast.objects.get(sku=skus[0], month=timezone.localdate().replace(day=1)).sellout_units == 31   # latest run only
+    assert str(ProductMargin.objects.get(sku=skus[1]).pct) == "12.34"
+    r = AmazonReport.objects.get(report_type="GET_VENDOR_SALES_REPORT")
+    assert r.status == "loaded" and "B0UNKNOWN1" in r.message
+    perf = AmazonPromoPerformance.objects.get(kind="promotion")
+    assert perf.promotion == promo and perf.spent_h == 205050
+    assert [l.sold_units for l in promo.lines.order_by("created_at")] == [40 + i for i in range(promo.lines.count())]
+    assert AmazonPromoPerformance.objects.get(kind="coupon").promotion == cp and cp.lines.order_by("created_at").first().sold_units == 17
+    cols, rows, _ = trackers.sellout_tracker()
+    assert cols[-1] == ("Amazon margin", "pct")
+    assert next(x for x in rows if x["cells"][0] == skus[1].model_no)["cells"][-1] == ProductMargin.objects.get(sku=skus[1]).pct
+    assert not any(t == "GET_VENDOR_NET_PURE_PRODUCT_MARGIN_REPORT" for t, *_ in __import__("integrations.amazon_reports", fromlist=["wanted"]).wanted())
+
+
+def test_a_report_without_data_or_a_failed_report_is_recorded(fake):
+    from integrations.amazon_reports import request_all
+    from integrations.models import AmazonReport
+    fake.report_status = {"GET_VENDOR_SALES_REPORT": "CANCELLED", "GET_VENDOR_INVENTORY_REPORT": "FATAL",
+                          "GET_VENDOR_FORECASTING_REPORT": "IN_PROGRESS"}
+    fake.report_docs = {k: {} for k in ("GET_PROMOTION_PERFORMANCE_REPORT", "GET_COUPON_PERFORMANCE_REPORT", "GET_VENDOR_NET_PURE_PRODUCT_MARGIN_REPORT")}
+    request_all()
+    amazon.sync()
+    st = dict(AmazonReport.objects.values_list("report_type", "status"))
+    assert (st["GET_VENDOR_SALES_REPORT"], st["GET_VENDOR_INVENTORY_REPORT"], st["GET_VENDOR_FORECASTING_REPORT"]) == ("no_data", "failed", "processing")
+    assert Notification.objects.filter(text__contains="inventory report failed").exists()
+
+
+# ---------- Vendor Shipments: collect pickup, tracking, labels ----------
+def test_asking_amazon_to_collect_books_the_slot_when_amazon_schedules_it(fake, as_user, settings, tmp_path, monkeypatch,
+                                                                          django_capture_on_commit_callbacks):
+    import base64
+
+    from core import tasks
+    from core.models import Attachment
+    settings.MEDIA_ROOT = tmp_path
+    monkeypatch.setattr(tasks.amazon_send, "defer", lambda **kw: tasks.amazon_send(**kw))
+    sh = Shipment.objects.filter(po__stage="asn", carton_list__isnull=False).distinct().first()
+    po = sh.po
+    with django_capture_on_commit_callbacks(execute=True):
+        r = as_user("khalid").post(f"/pos/{po.po_no}/pickup/", {"ready": "2026-10-20T09:00", "pallets": "2", "weight_kg": "350.5",
+                                                                 "version": po.version})
+    assert r.status_code == 204, r.content
+    path, body = fake.sent[-1]
+    req = body["shipments"][0]
+    assert path == "/vendor/shipping/v1/shipments" and req["shipmentFreightTerm"] == "Collect" and req["vendorShipmentIdentifier"] == sh.asn_no
+    assert req["collectFreightPickupDetails"]["requestedPickUp"] == "2026-10-20T06:00:00Z"                 # 09:00 Riyadh
+    assert req["shipmentMeasurements"] == {"totalCartonCount": sh.carton_list.count(), "totalPalletStackable": 2,
+                                           "shipmentWeight": {"unitOfMeasure": "Kg", "value": "350.50"}}
+    assert [c["containerIdentifiers"][0]["containerIdentificationNumber"] for c in req["containers"]] == list(sh.carton_list.values_list("sscc", flat=True))
+    fake.shipments[sh.asn_no] = [{"vendorShipmentIdentifier": sh.asn_no, "currentShipmentStatus": "CarrierAssigned", "buyerReferenceNumber": "ARN-77001",
+                                  "collectFreightPickupDetails": {"scheduledPickUp": "2026-10-21T07:00:00Z"},
+                                  "transportationDetails": {"carrierDetails": {"name": "Aramex Freight", "shipmentReferenceNumber": "PRO-55"}}}]
+    fake.labels[sh.asn_no] = [{"labelData": [{"labelSequenceNumber": 1, "labelFormat": "PDF", "label": base64.b64encode(b"%PDF-1.4 fake").decode()}]}]
+    amazon.sync()
+    sh.refresh_from_db()
+    po.refresh_from_db()
+    assert (po.stage, sh.freight, sh.slot_id, sh.carrier, sh.tracking_no, sh.amazon_status) == (
+        "slot", "collect", "ARN-77001", "Aramex Freight", "PRO-55", "CarrierAssigned")
+    assert sh.slot_start.isoformat().startswith("2026-10-21T07:00") and sh.labels_fetched
+    att = Attachment.objects.get(entity_id=po.po_no, filename__startswith="Amazon_label_")
+    assert att.file.read() == b"%PDF-1.4 fake"
+    assert Notification.objects.filter(text__contains=f"Amazon will collect PO {po.po_no}").exists()
+    html = as_user("khalid").get(f"/records/po/{po.po_no}/?tab=shipment").content.decode()
+    assert "Aramex Freight" in html and "PRO-55" in html
+
+
+def test_pickup_needs_the_api_and_an_asn(fake, as_user):
+    sh = Shipment.objects.filter(po__stage="asn").first()
+    Connector.objects.filter(key="amazon_vc").update(mode="file")
+    r = as_user("khalid").post(f"/pos/{sh.po.po_no}/pickup/", {"ready": "2026-10-20T09:00"})
+    assert "not connected by API" in json.loads(r.headers["HX-Trigger"])["toast"]["msg"]
+    Connector.objects.filter(key="amazon_vc").update(mode="api")
+    other = PurchaseOrder.objects.filter(stage="delivered").first()
+    r = as_user("khalid").post(f"/pos/{other.po_no}/pickup/", {"ready": "2026-10-20T09:00"})
+    assert "once the ASN is sent" in json.loads(r.headers["HX-Trigger"])["toast"]["msg"]
+
+
+# ---------- Catalog Items ----------
+def test_catalog_lookup_shows_amazons_details_and_differences(fake, as_user):
+    s = a_sku()
+    fake.catalog[s.asin] = {"asin": s.asin, "summaries": [{"marketplaceId": "A17E79C6D8DWNP", "itemName": "Vlog camera 4K", "brand": "Kodak",
+                                                          "modelNumber": "OTHER-MODEL", "packageQuantity": 1}],
+                            "identifiers": [{"marketplaceId": "A17E79C6D8DWNP", "identifiers": [{"identifierType": "EAN", "identifier": "6281234567890"}]}],
+                            "vendorDetails": [{"marketplaceId": "A17E79C6D8DWNP", "productGroup": "Camera"}]}
+    html = as_user("admin").get(f"/integrations/amazon/catalog/?sku={s.sku_code}").content.decode()
+    assert "Vlog camera 4K" in html and "Kodak" in html and f"Model: hub {s.model_no}, Amazon OTHER-MODEL" in html
+    assert "Not found in Amazon.sa" in as_user("faisal").get("/integrations/amazon/catalog/?asin=B0NOPE0000").content.decode()
+    assert "Check at Amazon" in as_user("admin").get(f"/records/sku/{s.sku_code}/").content.decode()
+    Connector.objects.filter(key="amazon_vc").update(mode="file")
+    assert "not connected by API" in as_user("admin").get(f"/integrations/amazon/catalog/?sku={s.sku_code}").content.decode()

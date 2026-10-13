@@ -127,6 +127,7 @@ ACTIONS = {
     "integrations.test": ("settings", lambda: f"/integrations/{connector()}/test/", {}),
     "integrations.sync": ("settings", lambda: f"/integrations/{connector()}/sync/", {}),
     "integrations.amazon_resend": ("settings", lambda: f"/integrations/amazon/tx/{amazon_tx()}/resend/", {}),
+    "po.pickup": ("ship", lambda: f"/pos/{po('asn')}/pickup/", {"ready": "2030-01-01T09:00"}),
     "settings.rule": ("settings", lambda: "/settings/rules/R12/", {"field": "abs", "value": "1"}),
     "settings.fc_add": ("settings", lambda: "/settings/fcs/add/", {"code": "TST-FC1", "name": "Test"}),
     "settings.vendor_code": ("settings", lambda: "/settings/vendor-codes/add/", {"code": "TESTVC"}),

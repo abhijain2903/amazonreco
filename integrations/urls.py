@@ -8,4 +8,5 @@ urlpatterns = [
     path("<str:key>/test/", views.test),
     path("<str:key>/sync/", views.sync),
     path("amazon/tx/<uuid:pk>/resend/", views.amazon_resend),
+    path("amazon/catalog/", views.amazon_catalog),
 ]

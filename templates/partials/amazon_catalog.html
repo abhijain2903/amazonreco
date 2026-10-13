@@ -1,0 +1,6 @@
+{% if error %}<p class="small muted">{{ error }}</p>
+{% else %}<div class="kv2"><div><span>Amazon title</span><b>{{ item.title|default:"—" }}</b></div><div><span>Brand</span><b>{{ item.brand|default:"—" }}</b></div>
+<div><span>Model</span><b class="mono">{{ item.model|default:"—" }}</b></div><div><span>EAN</span><b class="mono">{{ item.ean|default:"—" }}</b></div>
+{% if item.package_qty %}<div><span>Pack of</span><b>{{ item.package_qty }}</b></div>{% endif %}{% if item.group %}<div><span>Product group</span><b>{{ item.group }}</b></div>{% endif %}</div>
+{% if sku %}{% if item.diffs %}<div class="banner warn">{% icon 'alert' %}<span class="t"><b>Differs from the SKU master:</b> {{ item.diffs|join:" · " }}</span></div>
+{% else %}<p class="small ok-t">Matches the SKU master.</p>{% endif %}{% endif %}{% endif %}

@@ -108,3 +108,14 @@ class Forecast(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["sku", "month"], name="uniq_forecast_month")]
+
+
+class ProductMargin(models.Model):
+    """Amazon's net pure product margin for a SKU and month (Vendor Central / Reports API), as a percentage."""
+
+    sku = models.ForeignKey(Sku, on_delete=models.CASCADE, related_name="margins")
+    month = models.DateField(help_text="First day of the month")
+    pct = models.DecimalField(max_digits=7, decimal_places=2)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["sku", "month"], name="uniq_margin_month")]

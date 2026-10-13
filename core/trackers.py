@@ -87,9 +87,10 @@ def _local(dt):
 
 
 # ---------- Sell-out tracker ----------
+SELLOUT_EXTRA = 3   # the hub's own columns at the end: sell-in so far, weeks of cover, Amazon margin
 def sellout_tracker(year=None, cat="", status=""):
     """One row per model: Amazon stock on hand, sell-out per month (net of returns), this month's forecasts."""
-    from catalog.models import AmazonStock, Forecast, SellOut, Sku
+    from catalog.models import AmazonStock, Forecast, ProductMargin, SellOut, Sku
     from orders.models import PoLine
     today = timezone.localdate()
     year = year or today.year
@@ -109,7 +110,8 @@ def sellout_tracker(year=None, cat="", status=""):
         else:
             cols.append((f"MTD {MONTHS[m - 1]}{',' if m == 1 else ''} {year}", "int"))
     mname = MONTHS[cur_month - 1]
-    cols += [(f"{mname}. Sellin FCT", "int"), (f"{mname}. Sellout FCT", "int"), (f"{mname}. Sell-in so far", "int"), ("Weeks of cover", "num")]
+    cols += [(f"{mname}. Sellin FCT", "int"), (f"{mname}. Sellout FCT", "int"), (f"{mname}. Sell-in so far", "int"), ("Weeks of cover", "num"),
+             ("Amazon margin", "pct")]
     skus = Sku.objects.filter(active=True)
     if cat:
         skus = skus.filter(category=cat)
@@ -128,6 +130,9 @@ def sellout_tracker(year=None, cat="", status=""):
     sellin = dict(PoLine.objects.filter(po__order_date__year=year, po__order_date__month=cur_month)
                   .exclude(po__stage__in=["rejected", "cancelled"]).values_list("sku_id").annotate(n=Sum("qty_ordered")))
     lifecycle = dict(Sku._meta.get_field("lifecycle").choices)
+    margin = {}
+    for sku_id, pct in ProductMargin.objects.order_by("month").values_list("sku_id", "pct"):    # latest month wins
+        margin[sku_id] = pct
     rows = []
     for s in skus:
         sold = by.get(s.pk, {})
@@ -146,7 +151,7 @@ def sellout_tracker(year=None, cat="", status=""):
         rows.append(dict(sku=s.sku_code, est=est, flag="warn" if stock is not None and weekly and stock / weekly < 2 else "", cells=[
             s.model_no, s.asin, s.category, lifecycle.get(s.lifecycle, s.lifecycle), s.rrp_h, s.cost_h, stock,
             *[sold.get(m, 0) for m in months], si, f.sellout_units if f else None, sellin.get(s.pk, 0),
-            round(stock / weekly, 1) if stock is not None and weekly else None]))
+            round(stock / weekly, 1) if stock is not None and weekly else None, margin.get(s.pk)]))
     return cols, rows, dict(year=year, as_of=as_of, last=last, month=mname)
 
 

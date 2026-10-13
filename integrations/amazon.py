@@ -343,6 +343,161 @@ def credit_note(memo):
             "creditNoteDetails": {"referenceInvoiceNumber": inv.invoice_no, "originalInvoiceDate": iso(inv.invoice_date)}}
 
 
+def pickup_request(sh):
+    """SubmitShipments: ask Amazon to collect a shipment (collect / WePay freight). Amazon answers, through the shipment
+    details, with its reference (ARN), the scheduled pickup and the carrier."""
+    po = sh.po
+    lines = {l.sku_id: l for l in po.lines.select_related("sku")}
+    seq = {sid: (l.item_seq or str(l.position + 1)) for sid, l in lines.items()}
+    items = [{"itemSequenceNumber": seq.get(sl.sku_id, "1"), "buyerProductIdentifier": sl.sku.asin,
+              "vendorProductIdentifier": (lines[sl.sku_id].vendor_sku or sl.sku.model_no) if sl.sku_id in lines else sl.sku.model_no,
+              "shippedQuantity": {"amount": sl.qty, "unitOfMeasure": "Eaches"}}
+             for sl in sh.lines.select_related("sku").order_by("created_at") if sl.qty]
+    containers = [{"containerType": "carton", "containerSequenceNumber": str(c.seq),
+                   "containerIdentifiers": [{"containerIdentificationType": "SSCC", "containerIdentificationNumber": c.sscc}],
+                   "packedItems": [{"itemSequenceNumber": seq.get(c.sku_id, "1"), "buyerProductIdentifier": c.sku.asin,
+                                    "packedQuantity": {"amount": c.qty, "unitOfMeasure": "Eaches"}}]}
+                  for c in sh.carton_list.select_related("sku")]
+    meas = {"totalCartonCount": len(containers)}
+    if sh.pallets:
+        meas["totalPalletStackable"] = sh.pallets
+    if sh.weight_kg:
+        meas["shipmentWeight"] = {"unitOfMeasure": "Kg", "value": f"{sh.weight_kg:.2f}"}
+    order = {"purchaseOrderNumber": po.po_no, "purchaseOrderDate": iso(po.order_date), "items": items}
+    if po.window_start and po.window_end:
+        order["shipWindow"] = f"{iso(po.window_start)}--{iso(po.window_end)}"
+    return {"vendorShipmentIdentifier": sh.asn_no, "transactionType": "New", "transactionDate": iso(timezone.now()),
+            "shipmentFreightTerm": "Collect", "sellingParty": _party(po.vendor_code),
+            "shipFromParty": _party(api_settings().get("ship_from_party_id") or po.vendor_code), "shipToParty": _party(po.fc.code),
+            "shipmentMeasurements": meas, "collectFreightPickupDetails": {"requestedPickUp": iso(sh.pickup_ready_at or sh.ship_date)},
+            "purchaseOrders": [order], "containers": containers}
+
+
+@transaction.atomic
+def request_pickup(user, po_no, ready_at, pallets=0, weight_kg=None, version=None):
+    """Logistics asks Amazon to collect the shipment (instead of booking a Carrier Central appointment). The pickup
+    reference and time come back from Amazon and book the slot by themselves."""
+    from core.services import check_version, require
+    from fulfilment.services import shipment_of
+    from orders.services import get_po
+    require(user, "ship")
+    po = get_po(po_no, lock=True)
+    check_version(po, version)
+    if not is_live():
+        raise CommandError("Amazon is not connected by API. Submit the routing request in Vendor Central and enter the ARN.")
+    if po.stage != "asn":
+        raise CommandError("Ask Amazon to collect once the ASN is sent and before a slot is booked.")
+    sh = shipment_of(po)
+    if not ready_at:
+        raise CommandError("Say when the goods are ready to be collected.")
+    sh.freight, sh.pickup_ready_at, sh.pallets = "collect", ready_at, max(0, int(pallets or 0))
+    sh.weight_kg = Decimal(str(weight_kg)) if weight_kg not in (None, "") else None
+    sh.amazon_status = ""
+    sh.save()
+    po.bump()
+    po.save()
+    audit("po", po.po_no, f"Asked Amazon to collect ASN {sh.asn_no}: ready {timezone.localtime(ready_at):%d %b, %H:%M}, "
+          f"{sh.cartons} carton{'s' if sh.cartons != 1 else ''}" + (f", {sh.pallets} pallet{'s' if sh.pallets != 1 else ''}" if sh.pallets else ""),
+          user, action="pickup_request")
+    from core.tasks import amazon_send
+    transaction.on_commit(lambda: amazon_send.defer(kind="pickup", ref=sh.asn_no))
+    return sh
+
+
+def track_shipments(client):
+    """Amazon's status, carrier and tracking for shipments sent by API. A collect pickup Amazon has scheduled books the
+    delivery slot; small-parcel labels Amazon created are saved on the PO."""
+    from fulfilment.models import Shipment
+    from fulfilment.services import _book_slot
+    from .models import AmazonTransaction
+    sent = AmazonTransaction.objects.filter(kind__in=["asn", "pickup"]).exclude(status="error").values("ref")
+    n = 0
+    for sh in Shipment.objects.select_related("po").filter(po__stage__in=["asn", "slot"], delivered_at__isnull=True, asn_no__in=sent):
+        found = list(client.shipment_details(vendorShipmentIdentifier=sh.asn_no))
+        if not found:
+            continue
+        d = found[-1]
+        td = d.get("transportationDetails") or {}
+        cd = td.get("carrierDetails") or {}
+        before = (sh.amazon_status, sh.carrier, sh.tracking_no)
+        sh.amazon_status = (d.get("currentShipmentStatus") or "")[:30]
+        sh.amazon_status_at = parse_dt(d.get("currentshipmentStatusDate")) or sh.amazon_status_at
+        sh.carrier = (cd.get("name") or cd.get("code") or sh.carrier)[:80]
+        sh.tracking_no = (cd.get("shipmentReferenceNumber") or td.get("billOfLadingNumber") or sh.tracking_no)[:60]
+        sh.estimated_delivery = parse_dt(td.get("estimatedDeliveryDate")) or sh.estimated_delivery
+        sh.save()
+        po = sh.po
+        if (sh.amazon_status, sh.carrier, sh.tracking_no) != before:
+            n += 1
+            audit("po", po.po_no, f"Amazon: shipment {sh.asn_no} {_status_text(sh.amazon_status)}" + (f", carrier {sh.carrier}" if sh.carrier else "")
+                  + (f", tracking {sh.tracking_no}" if sh.tracking_no else ""), name=SYSTEM, system=True, action="amazon_shipment")
+        arn, pickup = d.get("buyerReferenceNumber"), parse_dt((d.get("collectFreightPickupDetails") or {}).get("scheduledPickUp"))
+        if sh.freight == "collect" and arn and pickup and po.stage == "asn":
+            with transaction.atomic():
+                _book_slot(po, timezone.now(), arn[:30], pickup, "Amazon pickup", name=SYSTEM, freight="collect")
+            notify(f"Amazon will collect PO {po.po_no} on {timezone.localtime(pickup):%d %b, %H:%M} (ARN {arn})", "info", ("po", po.po_no, "shipment"))
+        if sh.freight == "collect" and not sh.labels_fetched and sh.amazon_status in ("CarrierAssigned", "Shipped"):
+            _save_labels(client, sh)
+    return n
+
+
+def _status_text(s):
+    return {"Created": "created at Amazon", "TransportationRequested": "transport requested", "CarrierAssigned": "carrier assigned",
+            "Shipped": "picked up / shipped"}.get(s, s or "updated")
+
+
+def _save_labels(client, sh):
+    import base64
+
+    from django.core.files.base import ContentFile
+
+    from core.models import Attachment
+    saved = 0
+    for tl in client.shipment_labels(vendorShipmentIdentifier=sh.asn_no):
+        for ld in tl.get("labelData") or []:
+            if not ld.get("label"):
+                continue
+            name = f"Amazon_label_{sh.asn_no}_{ld.get('labelSequenceNumber') or saved + 1}.pdf"
+            a = Attachment(entity="po", entity_id=sh.po.po_no, kind="other", filename=name, uploaded_by_name=SYSTEM)
+            a.file.save(name, ContentFile(base64.b64decode(ld["label"])), save=True)
+            saved += 1
+    if saved:
+        sh.labels_fetched = True
+        sh.save(update_fields=["labels_fetched", "updated_at"])
+        audit("po", sh.po.po_no, f"{saved} shipping label{'s' if saved != 1 else ''} from Amazon saved in Documents", name=SYSTEM, system=True,
+              action="amazon_labels")
+    return saved
+
+
+def catalog_lookup(asin, sku=None, client=None):
+    """What Amazon's catalog says about an ASIN, and where it differs from the SKU master."""
+    client = client or Client()
+    item = client.catalog_item(asin.strip().upper())
+    mp = settings_marketplace()
+    summ = next((s for s in item.get("summaries") or [] if s.get("marketplaceId") == mp), (item.get("summaries") or [{}])[0])
+    ids = next((s for s in item.get("identifiers") or [] if s.get("marketplaceId") == mp), (item.get("identifiers") or [{}])[0])
+    vend = next((s for s in item.get("vendorDetails") or [] if s.get("marketplaceId") == mp), (item.get("vendorDetails") or [{}])[0])
+    codes = {i.get("identifierType", ""): i.get("identifier", "") for i in ids.get("identifiers") or []}
+    ean = codes.get("EAN") or codes.get("GTIN") or codes.get("UPC") or ""
+    out = {"asin": item.get("asin") or asin, "title": summ.get("itemName", ""), "brand": summ.get("brand", ""),
+           "model": summ.get("modelNumber") or summ.get("partNumber") or "", "manufacturer": summ.get("manufacturer", ""),
+           "ean": ean, "package_qty": summ.get("packageQuantity"), "brand_code": vend.get("brandCode", ""),
+           "group": vend.get("productGroup", ""), "diffs": []}
+    if sku is not None:
+        if out["model"] and out["model"].replace(" ", "").lower() != sku.model_no.replace(" ", "").lower():
+            out["diffs"].append(f"Model: hub {sku.model_no}, Amazon {out['model']}")
+        if ean and sku.ean and ean.lstrip("0") != sku.ean.lstrip("0"):
+            out["diffs"].append(f"EAN: hub {sku.ean}, Amazon {ean}")
+        if (out["package_qty"] or 1) > 1 and sku.case_pack in (None, 1):
+            out["diffs"].append(f"Amazon lists a pack of {out['package_qty']}")
+    return out
+
+
+def settings_marketplace():
+    from django.conf import settings
+    return settings.SPAPI_MARKETPLACE_ID
+
+
 def build(kind, ref):
     """(po_no, payload) for a document the hub holds."""
     from billing.models import CreditMemo, Invoice
@@ -360,11 +515,14 @@ def build(kind, ref):
     if kind == "credit_note":
         m = CreditMemo.objects.select_related("invoice__po").get(memo_no=ref)
         return m.invoice.po.po_no, credit_note(m)
+    if kind == "pickup":
+        sh = Shipment.objects.select_related("po__fc").get(asn_no=ref)
+        return sh.po.po_no, pickup_request(sh)
     raise ValueError(kind)
 
 
-LABEL = {"po_ack": "Acknowledgement", "asn": "ASN", "invoice": "Invoice", "credit_note": "Credit note"}
-TAB = {"po_ack": "lines", "asn": "shipment", "invoice": "invoice", "credit_note": "invoice"}
+LABEL = {"po_ack": "Acknowledgement", "asn": "ASN", "invoice": "Invoice", "credit_note": "Credit note", "pickup": "Pickup request"}
+TAB = {"po_ack": "lines", "asn": "shipment", "invoice": "invoice", "credit_note": "invoice", "pickup": "shipment"}
 
 
 def send(kind, ref, client=None):
@@ -382,7 +540,8 @@ def submit(t, client=None):
     try:
         submit_fn = {"po_ack": lambda b: client.submit_acknowledgements([b]),
                      "asn": lambda b: client.submit_shipment_confirmations([b]),
-                     "invoice": lambda b: client.submit_invoices([b]), "credit_note": lambda b: client.submit_invoices([b])}[t.kind]
+                     "invoice": lambda b: client.submit_invoices([b]), "credit_note": lambda b: client.submit_invoices([b]),
+                     "pickup": lambda b: client.submit_shipments([b])}[t.kind]
         t.transaction_id = submit_fn(t.payload)
         t.status, t.errors, t.sent_at = "processing", [], timezone.now()
         t.save()
@@ -399,7 +558,7 @@ def submit(t, client=None):
 
 
 def _owners(kind):
-    return {"po_ack": ["PIC"], "asn": ["Logistics"], "invoice": ["PIC", "Finance"], "credit_note": ["Finance"]}[kind]
+    return {"po_ack": ["PIC"], "asn": ["Logistics"], "invoice": ["PIC", "Finance"], "credit_note": ["Finance"], "pickup": ["Logistics"]}[kind]
 
 
 def check(t, client=None):
@@ -457,8 +616,12 @@ def sync(client=None, since=None):
     try:
         res = pull_orders(client, start, now)
         received = pull_receipts(client, start, now)
+        tracked = track_shipments(client)
+        from .amazon_reports import process_pending
+        reports = process_pending(client)
     except SpApiError as e:
         run = SyncRun.objects.create(connector=c, kind="sync", ok=False, message=f"Sync failed: {e}"[:300])
+        _notify_once(f"Amazon sync failed: {e}"[:250], ("conn", "amazon_vc", ""))
         return run
     checked = 0
     for t in AmazonTransaction.objects.filter(status="processing", sent_at__lt=now - timedelta(seconds=30)):
@@ -472,12 +635,21 @@ def sync(client=None, since=None):
     c.records_today += res["created"] + res["changed"]
     c.save(update_fields=["settings", "last_sync", "records_today", "updated_at"])
     msg = (f"Sync: {res['created']} new PO{'s' if res['created'] != 1 else ''}, {res['changed']} changed, "
-           f"{received} receipt update{'s' if received != 1 else ''}, {checked} transaction{'s' if checked != 1 else ''} checked")
+           f"{received} receipt update{'s' if received != 1 else ''}, {tracked} shipment update{'s' if tracked != 1 else ''}, "
+           f"{reports} report{'s' if reports != 1 else ''} loaded, {checked} transaction{'s' if checked != 1 else ''} checked")
     if res["error"]:
         msg += f"; {res['error']} PO{'s' if res['error'] != 1 else ''} not imported ({res['problems'][0]})"
-        notify(f"{res['error']} Amazon PO{'s' if res['error'] != 1 else ''} could not be imported: {res['problems'][0]}", "bad",
-               ("conn", "amazon_vc", ""), roles=["Admin"])
+        for p in [x for x in res["problems"] if "not in the" in x]:
+            _notify_once(f"Amazon PO could not be imported: {p}. Add the missing master data (Settings → SKU master can look an ASIN up "
+                         f"at Amazon), the next sync imports it", ("conn", "amazon_vc", ""))
     return SyncRun.objects.create(connector=c, kind="sync", ok=not res["error"], message=msg[:300], records_in=res["created"] + res["changed"])
+
+
+def _notify_once(text, link, hours=24):
+    """The same alert at most once a day, so a 15-minute sync does not repeat it."""
+    from core.models import Notification
+    if not Notification.objects.filter(text=text, at__gte=timezone.now() - timedelta(hours=hours)).exists():
+        notify(text, "bad", link, roles=["Admin"])
 
 
 def test_connection(client=None):

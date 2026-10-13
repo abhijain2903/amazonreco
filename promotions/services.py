@@ -145,7 +145,16 @@ def pull_sold_units(user, ref):
     require(user, "promo")
     p = get_promo(ref, lock=True)
     a, b = timezone.localtime(p.start).date(), timezone.localtime(p.end).date()
-    lines = list(p.lines.filter(sold_units__isnull=True))
+    lines = list(p.lines.select_related("sku").filter(sold_units__isnull=True))
+    perf = p.amazon_reports.filter(end__lte=timezone.now()).first()      # Amazon's promotion / coupon performance report
+    if perf and any(perf.by_asin.get(l.sku.asin.upper(), {}).get("units") is not None for l in lines):
+        for l in lines:
+            v = perf.by_asin.get(l.sku.asin.upper(), {}).get("units")
+            if v is not None:
+                l.sold_units = v
+                l.save()
+        audit("promotion", ref, f"Sold units taken from Amazon's {perf.get_kind_display().lower()} performance report", user, action="sold_units")
+        return
     real = dict(SellOut.objects.filter(sku__in=[l.sku_id for l in lines], day__gte=a, day__lte=b)
                 .values_list("sku_id").annotate(n=Sum("units")))
     if real:
