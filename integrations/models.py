@@ -117,3 +117,52 @@ class AmazonPromoPerformance(Base):
     class Meta:
         ordering = ["-start"]
         constraints = [models.UniqueConstraint(fields=["kind", "amazon_id"], name="uniq_amazon_promo_perf")]
+
+
+class AmazonCharge(Base):
+    """An invoice Amazon issued to ME (Finances Invoices API, type OTHER): co-op / promotion funding, price protection,
+    damage allowance, shortage or return charges. Linked to POs, agreements, shortages and returns by Amazon's own
+    references, so the deduction it causes in a remittance can be put against the right invoice."""
+
+    invoice_no = models.CharField(max_length=40, unique=True)
+    identifier = models.CharField(max_length=80, blank=True)
+    status = models.CharField(max_length=20, blank=True)
+    kind = models.CharField(max_length=30, blank=True, help_text="Amazon's service charge type, e.g. PRICE_PROTECTION")
+    description = models.CharField(max_length=200, blank=True)
+    issue_date = models.DateTimeField(null=True, blank=True)
+    amount_h = models.BigIntegerField(default=0)
+    vendor_code = models.CharField(max_length=12, blank=True)
+    po_nos = models.JSONField(default=list, blank=True)
+    agreement_ids = models.JSONField(default=list, blank=True)
+    shortage_invoice_ids = models.JSONField(default=list, blank=True)
+    return_ids = models.JSONField(default=list, blank=True)
+    debit_note_no = models.CharField(max_length=40, blank=True, help_text="The hub debit note created from it, if any")
+
+    class Meta:
+        ordering = ["-issue_date"]
+
+    @property
+    def status_label(self):
+        return self.status.replace("_", " ").capitalize()
+
+    @property
+    def kind_label(self):
+        return {"PRICE_PROTECTION": "Price protection", "DAMAGE_ALLOWANCE": "Damage allowance",
+                "FBA_INVENTORY_STORAGE_FEE": "Storage fee", "COOP": "Co-op / promotion"}.get(self.kind, "Amazon charge")
+
+
+class AmazonRemittance(Base):
+    """A payment Amazon made (Finance Remittance API), loaded once into the hub's payments."""
+
+    unique_payment_id = models.CharField(max_length=40, unique=True)
+    payment_no = models.CharField(max_length=40)
+    payment_date = models.DateTimeField(null=True, blank=True)
+    amount_h = models.BigIntegerField(default=0)
+    status = models.CharField(max_length=12, blank=True)
+    lines = models.IntegerField(default=0)
+    vendor_code = models.CharField(max_length=12, blank=True)
+    loaded = models.BooleanField(default=False)
+    message = models.CharField(max_length=300, blank=True)
+
+    class Meta:
+        ordering = ["-payment_date"]

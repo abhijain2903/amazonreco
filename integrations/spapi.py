@@ -178,6 +178,52 @@ class Client:
             raw = gzip.decompress(raw)
         return json.loads(raw.decode("utf-8-sig"))
 
+    # ---------- Finance Remittance (vendors) ----------
+    def remittances(self, start, end):
+        """getRemittanceHeaders, every page: payments Amazon made between two payment dates."""
+        params = {"marketplaceId": settings.SPAPI_MARKETPLACE_ID, "startDate": start, "endDate": end}
+        while True:
+            data = self.call("GET", "/finances/remittances/2026-03-17/remittances", params)
+            yield from data.get("remittances") or []
+            if not data.get("nextToken"):
+                return
+            params = {**params, "nextToken": data["nextToken"]}
+
+    def remittance(self, unique_payment_id):
+        """getRemittance with every page of line items: (header, items)."""
+        path = f"/finances/remittances/2026-03-17/remittances/{urllib.parse.quote(unique_payment_id)}"
+        params, items, header = {"marketplaceId": settings.SPAPI_MARKETPLACE_ID}, [], {}
+        while True:
+            data = self.call("GET", path, params)
+            header = data.get("remittanceHeader") or header
+            items += data.get("remittanceItems") or []
+            if not data.get("nextTokenForLineItems"):
+                return header, items
+            params = {**params, "nextTokenForLineItems": data["nextTokenForLineItems"]}
+
+    # ---------- Finances Invoices (vendor invoices and Amazon's charges) ----------
+    def finance_invoices(self, modified_after):
+        """getInvoiceHeaders, every page: invoices changed since a time (ME's invoices and Amazon's charges to ME)."""
+        params = {"marketplaceId": settings.SPAPI_MARKETPLACE_ID, "invoicesModifiedAfter": modified_after}
+        while True:
+            data = self.call("GET", "/finances/invoices/2026-06-25/invoices", params)
+            yield from data.get("invoices") or []
+            if not data.get("nextToken"):
+                return
+            params = {**params, "nextToken": data["nextToken"]}
+
+    def finance_invoice(self, identifier):
+        """getInvoice with every page of line items: (header, items)."""
+        path = f"/finances/invoices/2026-06-25/invoices/{urllib.parse.quote(identifier, safe='~')}"
+        params, items, header = {"marketplaceId": settings.SPAPI_MARKETPLACE_ID}, [], {}
+        while True:
+            data = self.call("GET", path, params)
+            header = data.get("invoiceHeader") or header
+            items += data.get("invoiceItems") or []
+            if not data.get("nextTokenForLineItems"):
+                return header, items
+            params = {**params, "nextTokenForLineItems": data["nextTokenForLineItems"]}
+
     # ---------- Catalog Items ----------
     def catalog_item(self, asin):
         return self.call("GET", f"/catalog/2022-04-01/items/{urllib.parse.quote(asin)}",

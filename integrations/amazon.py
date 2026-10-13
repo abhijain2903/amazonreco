@@ -623,6 +623,17 @@ def sync(client=None, since=None):
         run = SyncRun.objects.create(connector=c, kind="sync", ok=False, message=f"Sync failed: {e}"[:300])
         _notify_once(f"Amazon sync failed: {e}"[:250], ("conn", "amazon_vc", ""))
         return run
+    # Finance (remittances, invoice status, Amazon's charges): newer vendor APIs with their own role. If Amazon refuses
+    # them for this account, everything else still syncs and the remittance upload keeps working.
+    remits = inv_changed = charges = 0
+    finance_note = ""
+    try:
+        from .amazon_finance import pull_invoices, pull_remittances
+        inv_changed, charges = pull_invoices(client, start - timedelta(days=1))
+        remits = pull_remittances(client, since or (now - timedelta(days=14)), now)
+    except SpApiError as e:
+        finance_note = f"; finance not synced ({e.status or 'error'}: needs the Finance and Accounting role)" if e.status in (401, 403) else f"; finance not synced: {e}"
+        _notify_once(f"Amazon finance data (remittances, invoice status) could not be read: {e}"[:250], ("conn", "amazon_vc", ""))
     checked = 0
     for t in AmazonTransaction.objects.filter(status="processing", sent_at__lt=now - timedelta(seconds=30)):
         try:
@@ -636,7 +647,9 @@ def sync(client=None, since=None):
     c.save(update_fields=["settings", "last_sync", "records_today", "updated_at"])
     msg = (f"Sync: {res['created']} new PO{'s' if res['created'] != 1 else ''}, {res['changed']} changed, "
            f"{received} receipt update{'s' if received != 1 else ''}, {tracked} shipment update{'s' if tracked != 1 else ''}, "
-           f"{reports} report{'s' if reports != 1 else ''} loaded, {checked} transaction{'s' if checked != 1 else ''} checked")
+           f"{reports} report{'s' if reports != 1 else ''} loaded, {remits} remittance{'s' if remits != 1 else ''}, "
+           f"{inv_changed} invoice status update{'s' if inv_changed != 1 else ''}, {charges} Amazon charge{'s' if charges != 1 else ''}, "
+           f"{checked} transaction{'s' if checked != 1 else ''} checked{finance_note}")
     if res["error"]:
         msg += f"; {res['error']} PO{'s' if res['error'] != 1 else ''} not imported ({res['problems'][0]})"
         for p in [x for x in res["problems"] if "not in the" in x]:

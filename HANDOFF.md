@@ -97,7 +97,14 @@ R12 = global tolerance (SAR 1). BRD worked example used in seed and tests: 180 u
   carrier and tracking; small-parcel labels (GetShipmentLabels) saved to the PO's Documents. Catalog Items: "Check at
   Amazon" on the SKU drawer and "Look up this ASIN" on the SKU form. Not built: SP-API Notifications (needs an AWS SQS /
   EventBridge destination — a new AWS resource; the daily reports cover the same data).
-- Tests: `pytest` → 292 passed (rules, flows, uploads U1-U12, API, access matrix, matching, defects, phases A–C, review
+- SP-API finance (`integrations/amazon_finance.py`, Amazon's 2026 vendor finance APIs, role "Finance and Accounting"):
+  Finance Remittance → hub payments as U6 makes them (a line paying an ME invoice is matched; an Amazon deduction line is put
+  on the invoice it concerns — via the charge's PO / shortage references or the "…SCR / PCR" claim number — and shows as
+  short-paid with Amazon's reason; the rest waits in To match). Finances Invoices → ME's invoices: Amazon's status, settlement
+  and variance reasons (holds / rejections set automatically); Amazon's charges (price protection, damage allowance, co-op…)
+  stored with their references, and a charge with an agreement ID becomes a debit note checked by R10. If Amazon refuses
+  these APIs for the account, the rest of the sync carries on (alert once a day) and the remittance upload still works.
+- Tests: `pytest` → 296 passed (rules, flows, uploads U1-U12, API, access matrix, matching, defects, phases A–C, review
   regressions, trackers, Amazon SP-API, smoke). Playwright e2e: 18 passed against a running seeded server (`test_ui` + `test_scenarios`, the real-world cases).
 - Reports page: six tabs (summary with period-on-period and money leaked/protected, orders & stock, shipping, cash &
   deductions, promotions, team speed), 12-week trends, one-workbook export. Demo seed adds realistic history for it.
@@ -136,7 +143,9 @@ Live since 28 Sep 2026 at **https://amazonhub.iksulalive.com** on AWS EC2 `i-00c
    Order Tracking; Brand Analytics for reports), authorises it for every vendor code, gives the client ID / secret /
    refresh token for `/etc/mehub/mehub.env`; then Test connection, try `HUB_SPAPI_SANDBOX=true` first, set vendor codes,
    ship-from party ID and VAT number, switch the connector to API, run `amazon_sync --days 180`. Still by upload: remittance,
-   debit notes, returns (no vendor SP-API for them). The app also needs the Brand Analytics role for the reports.
+   returns (no vendor SP-API for them). The app also needs the Brand Analytics role for the reports and the Finance
+   and Accounting role for remittances and invoice status; whether Amazon.sa serves the 2026 finance APIs is confirmed
+   by the first live sync.
    `amazon_sync --reports` asks for the day's reports at once.
    Other live integrations behind the adapters (`integrations/connectors.py`): SAP OData (S/4) or IDoc/BAPI (ECC);
    Salesforce order log; Microsoft 365 / SMTP email for alerts.

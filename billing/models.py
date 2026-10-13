@@ -39,9 +39,17 @@ class Invoice(Base):
         ("submitted", "Submitted"), ("accepted", "Accepted"), ("on_hold", "On hold at Amazon"), ("rejected", "Rejected by Amazon")])
     amazon_note = models.CharField(max_length=200, blank=True, help_text="Amazon's reason for a hold or rejection")
     revision = models.PositiveIntegerField(default=0, help_text="Times the invoice was corrected and sent again")
+    # Amazon's own view (SP-API Finances Invoices): status, how it was settled and why amounts were held back
+    amazon_finance_status = models.CharField(max_length=20, blank=True, help_text="IN_PROGRESS / REJECTED / PAID / DEDUCTED …")
+    amazon_settlement = models.JSONField(default=dict, blank=True, help_text="{breakdown type: halalas}")
+    amazon_variance = models.CharField(max_length=300, blank=True, help_text="Amazon's reasons for a price / quantity variance")
 
     class Meta:
         ordering = ["-invoice_date"]
+
+    @property
+    def amazon_finance_label(self):
+        return self.amazon_finance_status.replace("_", " ").capitalize()
 
     @property
     def memo_h(self):

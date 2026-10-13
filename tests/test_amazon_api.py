@@ -31,6 +31,8 @@ class FakeAmazon:
         self.tokens = 0
         self.reports, self.report_docs, self.report_status = {}, {}, {}   # reportId -> type; type -> document; type -> status
         self.shipments, self.labels, self.catalog = {}, {}, {}           # by vendorShipmentIdentifier / ASIN
+        self.fin_invoices, self.fin_items, self.remits, self.remit_items = [], {}, [], {}   # finance APIs
+        self.refuse_finance = False
 
     def download(self, url, timeout=120):
         import gzip
@@ -46,6 +48,23 @@ class FakeAmazon:
         assert headers["x-amz-access-token"].startswith("Atza|")
         if self.fail_next:
             return self.fail_next.pop(0), {}, json.dumps({"errors": [{"code": "QuotaExceeded", "message": "slow down"}]})
+        if u.path.startswith("/finances/") and self.refuse_finance:
+            return 403, {}, json.dumps({"errors": [{"code": "Unauthorized", "message": "Access to requested resource is denied."}]})
+        if u.path == "/finances/invoices/2026-06-25/invoices":
+            return 200, {}, json.dumps({"invoices": self.fin_invoices, "numOfRecords": len(self.fin_invoices)})
+        if u.path.startswith("/finances/invoices/2026-06-25/invoices/"):
+            ident = urllib.parse.unquote(u.path.rsplit("/", 1)[1])
+            head = next(h for h in self.fin_invoices if h["invoiceIdentifier"] == ident)
+            return 200, {}, json.dumps({"invoiceHeader": head, "invoiceItems": self.fin_items.get(ident, [])})
+        if u.path == "/finances/remittances/2026-03-17/remittances":
+            return 200, {}, json.dumps({"remittances": self.remits, "numOfRecords": len(self.remits)})
+        if u.path.startswith("/finances/remittances/2026-03-17/remittances/"):
+            uid = u.path.rsplit("/", 1)[1]
+            items = self.remit_items[uid]
+            head = next(h for h in self.remits if h["uniquePaymentId"] == uid)
+            if "nextTokenForLineItems" in q:                                   # second page
+                return 200, {}, json.dumps({"remittanceHeader": head, "remittanceItems": items[2:]})
+            return 200, {}, json.dumps({"remittanceHeader": head, "remittanceItems": items[:2], **({"nextTokenForLineItems": "p2"} if len(items) > 2 else {})})
         if u.path == "/vendor/orders/v1/purchaseOrders":
             want_changed = q.get("isPOChanged") == "true"
             orders = [o for o in self.orders if bool(o.get("_changed")) == want_changed]
@@ -495,3 +514,95 @@ def test_catalog_lookup_shows_amazons_details_and_differences(fake, as_user):
     assert "Check at Amazon" in as_user("admin").get(f"/records/sku/{s.sku_code}/").content.decode()
     Connector.objects.filter(key="amazon_vc").update(mode="file")
     assert "not connected by API" in as_user("admin").get(f"/integrations/amazon/catalog/?sku={s.sku_code}").content.decode()
+
+
+# ---------- Finance: invoice status, Amazon's charges, remittances ----------
+def sar(h):
+    return {"currencyCode": "SAR", "currencyAmount": round(h / 100, 2)}
+
+
+def test_amazon_holds_back_part_of_an_invoice_then_pays_it(fake, as_user):
+    inv = Invoice.objects.filter(amazon_status="submitted").select_related("po").first()
+    l = inv.lines.select_related("sku").first()
+    ident = f"{inv.invoice_no}~PAYEE1"
+    head = {"invoiceNumber": inv.invoice_no, "invoiceIdentifier": ident, "invoiceType": "AP_INVENTORY", "invoiceStatus": "IN_PROGRESS",
+            "invoiceAmount": sar(inv.total_h), "invoiceSettlementBreakdowns": [{"breakdownType": "QuantityVarianceAmount", "breakdownAmount": sar(46000)}],
+            "relatedIdentifiers": [{"relatedIdentifierName": "VENDOR_CODE", "relatedIdentifierValue": ["MEAUD"]}]}
+    fake.fin_invoices = [head]
+    fake.fin_items[ident] = [{"lineItemId": "1", "totalAmount": sar(100), "lineItemContext": {
+        "lineItemType": "GOODS", "itemIdentifiers": [{"itemIdentifierName": "ASIN", "itemIdentifierValue": l.sku.asin}],
+        "matchingContext": {"matchedQuantity": 8, "matchedAmount": sar(100), "quantityVariance": -2,
+                            "varianceReasons": [{"varianceType": "PQV", "defectTypes": ["SHORTAGES_IN_TRANSIT"]}]}}}]
+    run = amazon.sync()
+    assert "1 invoice status update" in run.message, run.message
+    inv.refresh_from_db()
+    assert (inv.amazon_status, inv.amazon_finance_status) == ("on_hold", "IN_PROGRESS")
+    assert f"{l.sku.model_no}: 2 units (shortage in transit)" in inv.amazon_note and inv.amazon_settlement == {"QuantityVarianceAmount": 46000}
+    assert Notification.objects.filter(text__contains=f"Amazon is holding back part of invoice {inv.invoice_no}").exists()
+    html = as_user("priya").get(f"/records/po/{inv.po.po_no}/?tab=invoice").content.decode()
+    assert "Held back: quantity" in html and "SAR 460" in html and "shortage in transit" in html
+    head.update(invoiceStatus="PAID", invoiceSettlementBreakdowns=[{"breakdownType": "AmountPaid", "breakdownAmount": sar(inv.total_h)}])
+    amazon.sync()
+    inv.refresh_from_db()
+    assert (inv.amazon_status, inv.amazon_finance_status, inv.amazon_note) == ("accepted", "PAID", "")
+
+
+def test_an_amazon_charge_for_an_agreement_becomes_a_checked_debit_note(fake):
+    from debitnotes.models import DebitNote
+    from integrations.models import AmazonCharge
+    from promotions.models import Promotion
+    from debitnotes.services import evaluate
+    promo = Promotion.objects.filter(agreement_no__isnull=False).exclude(agreement_no__in=DebitNote.objects.values("agreement_no")).first()
+    l = promo.lines.select_related("sku").first()
+    fake.fin_invoices = [{"invoiceNumber": "VCDN-7000001", "invoiceIdentifier": "VCDN-7000001", "invoiceType": "OTHER", "invoiceStatus": "DEDUCTED",
+                          "issueDate": "2026-10-01T00:00:00Z", "invoiceAmount": sar(l.support_h * 30),
+                          "relatedIdentifiers": [{"relatedIdentifierName": "AGREEMENT_IDS", "relatedIdentifierValue": [promo.agreement_no]}]}]
+    fake.fin_items["VCDN-7000001"] = [{"lineItemId": "1", "quantity": 30, "unitCost": sar(l.support_h), "totalAmount": sar(l.support_h * 30),
+                                       "lineItemContext": {"lineItemType": "SERVICES", "itemDescription": "Promotion funding",
+                                                           "itemIdentifiers": [{"itemIdentifierName": "ASIN", "itemIdentifierValue": l.sku.asin}]}}]
+    run = amazon.sync()
+    assert "1 Amazon charge" in run.message
+    c = AmazonCharge.objects.get(invoice_no="VCDN-7000001")
+    dn = DebitNote.objects.get(dn_no="VCDN-7000001")
+    assert (c.kind, c.debit_note_no, dn.agreement_no) == ("COOP", "VCDN-7000001", promo.agreement_no)
+    assert [(x.sku, x.units, x.rate_h) for x in dn.lines.all()] == [(l.sku, 30, l.support_h)]
+    assert evaluate(dn)["status"] != "unlinked"
+    amazon.sync()                                                     # unchanged charge: not fetched or created again
+    assert DebitNote.objects.filter(dn_no="VCDN-7000001").count() == 1
+
+
+def test_a_remittance_pays_invoices_and_puts_each_deduction_on_its_invoice(fake):
+    from integrations.models import AmazonCharge, AmazonRemittance
+    from payments.models import Payment
+    a, b, c = list(Invoice.objects.filter(po__stage="invoiced", payments__isnull=True).select_related("po").order_by("invoice_no")[:3])
+    AmazonCharge.objects.create(invoice_no="PPA-55001", kind="PRICE_PROTECTION", po_nos=[c.po.po_no], amount_h=50000)
+    uid = "756473657"
+    fake.remits = [{"uniquePaymentId": uid, "paymentNumber": "355522363", "paymentDate": "2026-10-12T00:00:00Z", "remittanceStatus": "SUCCESSFUL",
+                    "paymentAmount": sar(1), "relatedIdentifiers": [{"relatedIdentifierName": "VENDOR_CODE", "relatedIdentifierValue": ["MEAUD"]}]},
+                   {"uniquePaymentId": "999", "paymentNumber": "1", "paymentDate": "2026-10-12T00:00:00Z", "remittanceStatus": "IN_PROGRESS", "paymentAmount": sar(1)}]
+    line = lambda no, h, desc="": {"invoiceNumber": no, "totalAmount": sar(h), "netAmountPaid": sar(h), "description": desc, "invoiceType": "Standard"}
+    fake.remit_items[uid] = [line(a.invoice_no, a.total_h), line(b.invoice_no, b.total_h), line(b.invoice_no + "SCR", -230000, "Shortage claim"),
+                             line(c.invoice_no, c.total_h), line("PPA-55001", -50000, "Price protection"), line("XYZ-0001", 120000, "Payment")]
+    run = amazon.sync()
+    assert "1 remittance," in run.message, run.message
+    pa, pb, pc = (Payment.objects.get(payment_no=f"355522363/{i.invoice_no}") for i in (a, b, c))
+    assert pa.status == "matched" and pa.invoice == a
+    assert (pb.status, pb.deduction_h, pb.paid_h) == ("short", 230000, b.total_h - 230000) and f"{b.invoice_no}SCR" in pb.reason
+    assert (pc.status, pc.deduction_h) == ("short", 50000) and pc.reason.startswith("Price protection PPA-55001")
+    assert Payment.objects.get(payment_no="355522363/XYZ-0001").status == "unmatched"
+    assert Payment.objects.get(payment_no="355522363/XYZ-0001").vendor_code == "MEAUD"
+    assert AmazonRemittance.objects.get(unique_payment_id=uid).loaded and not AmazonRemittance.objects.get(unique_payment_id="999").loaded
+    n = Payment.objects.count()
+    amazon.sync()                                                     # a loaded payment is never loaded twice
+    assert Payment.objects.count() == n
+
+
+def test_without_the_finance_role_everything_else_still_syncs(fake):
+    s, fc = a_sku(), FulfilmentCentre.objects.first()
+    fake.refuse_finance = True
+    fake.orders = [order("AMZ0099A", s, fc)]
+    run = amazon.sync()
+    assert run.ok and "1 new PO" in run.message and "finance not synced (403: needs the Finance and Accounting role)" in run.message
+    assert Notification.objects.filter(text__contains="Amazon finance data").count() == 1
+    amazon.sync()
+    assert Notification.objects.filter(text__contains="Amazon finance data").count() == 1     # once a day, not every 15 minutes

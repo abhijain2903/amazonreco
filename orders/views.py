@@ -153,7 +153,9 @@ def drawer(request, po_no):
             shorts = [p for p in pays if p.status == "short"]
             for p in shorts:
                 p.ded, p.dn_sugs = deduction_for(p), suggestions_for("pay_dn", p)
-            ctx.update(shorts=shorts, ai_on=available() if shorts else False)
+            from integrations.models import AmazonCharge
+            ctx.update(shorts=shorts, ai_on=available() if shorts else False,
+                       amz_charges=list(AmazonCharge.objects.filter(po_nos__contains=[po.po_no])))
     if tab == "checks":
         rows = []
         for l in lines:
