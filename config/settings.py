@@ -180,6 +180,15 @@ STORAGES = {
 FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
 DATA_UPLOAD_MAX_MEMORY_SIZE = 26 * 1024 * 1024
 HUB_MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+# Amazon Selling Partner API (vendor). Credentials of ME's private SP-API app, set only in the server's env file.
+# Saudi Arabia is served by the EU endpoint. HUB_SPAPI_SANDBOX=true calls Amazon's static sandbox instead.
+SPAPI_CLIENT_ID = env("HUB_SPAPI_CLIENT_ID", "")
+SPAPI_CLIENT_SECRET = env("HUB_SPAPI_CLIENT_SECRET", "")
+SPAPI_REFRESH_TOKEN = env("HUB_SPAPI_REFRESH_TOKEN", "")
+SPAPI_SANDBOX = env_bool("HUB_SPAPI_SANDBOX", False)
+SPAPI_ENDPOINT = env("HUB_SPAPI_ENDPOINT", "https://sandbox.sellingpartnerapi-eu.amazon.com" if SPAPI_SANDBOX
+                     else "https://sellingpartnerapi-eu.amazon.com")
+SPAPI_TOKEN_URL = env("HUB_SPAPI_TOKEN_URL", "https://api.amazon.com/auth/o2/token")
 HUB_API_TOKEN = env("HUB_API_TOKEN", "")  # Bearer token for system-to-system calls (acts as HUB_API_USER)
 HUB_API_USER = env("HUB_API_USER", "admin")
 

@@ -5,19 +5,26 @@
 {% block title %}{{ c.name }}{% endblock %}
 {% block chip %}{% chip c.status_label tone %}{% endblock %}
 {% block body %}
-<div class="banner warn">{% icon 'info' %}<span class="t"><b>Placeholder.</b> Fields show what the real connector needs. Test and sync are simulated.</span></div>
+{% if built %}<div class="banner info">{% icon 'plug' %}<span class="t"><b>Amazon Selling Partner API.</b> POs, changes and receipts come in on the schedule below; acknowledgements, ASNs, invoices and credit notes go out when they are confirmed in the hub. Uploads keep working as a fallback.</span></div>
+{% elif live %}<div class="banner warn">{% icon 'info' %}<span class="t"><b>Placeholder.</b> Fields show what the real connector needs. Test and sync are simulated.</span></div>{% endif %}
 <p class="muted">{{ c.description }}</p>
 <form id="conn-form" class="stack" style="gap:16px">
   <div class="field"><label for="conn-mode">Connection mode</label>
   <select class="sel" id="conn-mode" name="mode" hx-get="/records/conn/{{ c.key }}/" hx-target="#drawer" hx-trigger="change" {% if not caps.settings %}disabled{% endif %}>{% for m, l in modes %}<option value="{{ m }}" {% if m == mode %}selected{% endif %}>{{ l }}</option>{% endfor %}</select>
   {% if not caps.settings %}<span class="help">Only Admin can change connectors.</span>{% endif %}</div>
   {% if fields %}<div class="fgrid">{% for f in fields %}<div class="field"><label for="cf-{{ f.name }}">{{ f.label }}</label>
-  {% if f.secret %}<input class="inp" id="cf-{{ f.name }}" type="password" placeholder="Set on the server" disabled><span class="help">Kept in the server's secret store, never in the database.</span>
-  {% else %}<input class="inp" id="cf-{{ f.name }}" name="{{ f.name }}" value="{{ f.value }}" {% if not caps.settings %}disabled{% endif %}>{% endif %}</div>{% endfor %}</div>
+  {% if f.secret %}<input class="inp" id="cf-{{ f.name }}" type="password" placeholder="{% if f.env and f.env_set %}Set on the server{% elif f.env %}Not set yet{% else %}Set on the server{% endif %}" disabled><span class="help">{% if f.env %}{% if f.env_set %}{% chip "Set" "ok" %} {% else %}{% chip "Missing" "bad" %} {% endif %}Server env file: <code>{{ f.env }}</code>. Never stored in the database.{% else %}Kept in the server's secret store, never in the database.{% endif %}</span>
+  {% else %}<input class="inp" id="cf-{{ f.name }}" name="{{ f.name }}" value="{{ f.value }}" {% if not caps.settings %}disabled{% endif %}>{% if f.help %}<span class="help">{{ f.help }}</span>{% endif %}{% endif %}</div>{% endfor %}</div>
   {% else %}<div class="banner info">{% icon 'upload' %}<span class="t">{% if mode == 'manual' %}Staff enter this data on the relevant screen.{% elif mode == 'off' %}This connector is switched off.{% else %}Data arrives through the Uploads page.{% endif %} No credentials needed.</span></div>{% endif %}
   {% if live %}<div class="field"><label for="conn-sched">Sync schedule</label><select class="sel" id="conn-sched" name="schedule" {% if not caps.settings %}disabled{% endif %}>{% for s in schedules %}<option {% if s == schedule %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></div>{% endif %}
 </form>
 <h3 class="sect-h">Data this connector moves</h3><div class="row">{% for d in data %}<span class="pill-note">{{ d }}</span>{% endfor %}</div>
+{% if txs %}<div style="min-width:0"><h3 class="sect-h">Documents sent to Amazon</h3>
+<div class="tw"><table class="dt compact"><thead><tr><th>Document</th><th>Status</th><th></th></tr></thead><tbody>
+{% for t in txs %}<tr><td>{{ t.get_kind_display }} <span class="mono">{{ t.ref }}</span><div class="small muted">PO <span class="mono">{{ t.po_no }}</span> · {{ t.created_at|fdt }}</div></td>
+<td>{% if t.status == 'success' %}{% chip "Accepted" "ok" %}{% elif t.status == 'processing' %}{% chip "With Amazon" "info" %}{% elif t.status == 'queued' %}{% chip "Queued" "" %}{% else %}{% chip t.get_status_display "bad" %}<div class="small bad-t">{{ t.error_text }}</div>{% endif %}</td>
+<td>{% if t.status == 'failure' or t.status == 'error' %}<button class="btn sm" hx-post="/integrations/amazon/tx/{{ t.pk }}/resend/" hx-swap="none" {% perm 'settings' %}>Send again</button>{% endif %}</td></tr>{% endfor %}
+</tbody></table></div></div>{% endif %}
 <h3 class="sect-h">Event log</h3><div class="log">{% for r in runs %}<div><time>{{ r.finished_at|fdt }}</time><span class="{% if not r.ok %}bad-t{% endif %}">{{ r.message }}</span></div>{% empty %}<span class="faint">No events yet.</span>{% endfor %}</div>
 {% endblock %}
 {% block foot %}

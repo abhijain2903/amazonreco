@@ -367,7 +367,7 @@ def apply(tid, rows, user):
         lines += [f"{updated} stock levels updated", "Stock check R2 re-ran on every PO waiting for confirmation"]
     elif tid == "U4":
         from orders.models import PurchaseOrder
-        from orders.services import create_po, notify_issues
+        from orders.services import create_po, default_confirm_by, notify_issues
         issues = skipped = 0
         changed = 0
         for no, ls in group(rows, "po_no").items():
@@ -387,7 +387,7 @@ def apply(tid, rows, user):
                 continue
             fc = FulfilmentCentre.objects.get(code=ls[0]["fc_code"])  # validated above: unknown FCs are errors
             od = parse_date(ls[0]["order_date"]) or now
-            po = create_po(no, fc, od, max(od + timedelta(days=2), now + timedelta(hours=6)),
+            po = create_po(no, fc, od, default_confirm_by(od),
                            [((resolve_sku(o["asin"]) or resolve_sku(o.get("model_no"))), int(num(o["qty_ordered"])), to_h(o["unit_cost_sar"])) for o in ls],
                            window_start=parse_date(ls[0].get("ship_window_start")), window_end=parse_date(ls[0]["ship_window_end"]),
                            user=user, source="file upload")

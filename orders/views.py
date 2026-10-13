@@ -133,7 +133,7 @@ def drawer(request, po_no):
         ctx["tot_conf"] = sum(l.qty_confirmed for l in lines)
         ctx["tot_value"] = sum(l.qty_confirmed * l.cost_h for l in lines)
     from fulfilment.services import open_qty, shipped_qty
-    ctx.update(shipped=shipped_qty(po), any_bo=any(l.qty_backorder for l in lines), open_units=open_qty(po) if po.stage not in ("new", "rejected", "cancelled") else 0,
+    ctx.update(shipped=shipped_qty(po), any_bo=any(l.qty_backorder for l in lines), any_rcv=any(l.qty_received is not None for l in lines), open_units=open_qty(po) if po.stage not in ("new", "rejected", "cancelled") else 0,
                invs=list(po.invoices.order_by("seq").prefetch_related("payments", "credit_memos")),
                ships=list(po.shipments.order_by("seq")),
                bo_eta=min((l.backorder_eta for l in lines if l.qty_backorder and l.backorder_eta), default=None))

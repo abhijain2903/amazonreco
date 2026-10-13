@@ -190,7 +190,7 @@ def submit_asn(user, po_no, version=None):
         for c in sh.carton_list.select_related("sku")]
     save_file("labels", f"Carton_labels_{sh.asn_no}.csv", labels, "po", po.po_no)
     from integrations.connectors import get_adapter
-    get_adapter("amazon_vc").push("asn", f)
+    get_adapter("amazon_vc").push("asn", f, ref=sh.asn_no)
     return sh, f
 
 

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="ph"><div><h1>Integrations</h1><p>Each system connects through one adapter. File mode works today; switch a connector to live when access is ready.</p></div></div>
-<div class="banner warn" style="margin-bottom:16px">{% icon 'info' %}<span class="t"><b>Placeholders.</b> Live modes are stubs until connection details are agreed with ME IT. Test and sync record an event but make no external call.</span></div>
+<div class="banner warn" style="margin-bottom:16px">{% icon 'info' %}<span class="t"><b>Amazon Vendor Central has a working API connector</b> (Selling Partner API). The other live modes are placeholders until connection details are agreed with ME IT: their test and sync record an event but make no external call.</span></div>
 <div class="grid3">{% for c in conns %}<div class="conn"><div class="ch"><span class="lg">{{ c.short }}</span><div><h4>{{ c.name }}</h4>{% chip c.status_label c.tone %}</div></div>
 <p class="small muted">{{ c.description }}</p>
 <div class="kv"><span>Mode</span><b>{{ c.mode_label }}</b><span>Last sync</span><b>{{ c.last_sync|ago }}</b><span>Records today</span><b class="tnum">{{ c.records_today|num }}</b></div>

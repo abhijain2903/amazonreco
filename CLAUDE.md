@@ -15,7 +15,7 @@ python manage.py migrate
 python manage.py seed_demo --reset           # deterministic example data; users faisal/noura/omar/khalid/reem/priya/tariq/admin, password "demo"
 python manage.py runserver                   # http://127.0.0.1:8000 (dev user-picker login)
 python manage.py procrastinate worker        # background + periodic jobs
-pytest                                       # 255 tests: rules, flows F1-F7, uploads U1-U10, API, access matrix, matching, phases A-C, review regressions, smoke — needs Postgres
+pytest                                       # 286 tests: rules, flows F1-F7, uploads U1-U12, API, access matrix, matching, phases A-C, trackers, Amazon SP-API, smoke — needs Postgres
 E2E_BASE_URL=http://127.0.0.1:8000 pytest tests/e2e -m e2e -p no:django   # Playwright; re-seed first
 ```
 DB settings come from `POSTGRES_*` env vars (default db `mehub`, host `localhost`). `DJANGO_DEBUG` defaults to true.
@@ -45,6 +45,9 @@ DB settings come from `POSTGRES_*` env vars (default db `mehub`, host `localhost
 - ME's own trackers (PO, sell-out, claim) are dashboard tabs (`/?view=po|sellout|claims`), built in `core/trackers.py` with the exact
   column order of ME's Excel sheets; the export gives ME's columns only, the hub's extra columns come after them on screen.
 - External systems only through adapters in `integrations/connectors.py`; live methods raise `NotImplementedError` until built.
+  Built: Amazon SP-API (`integrations/spapi.py` client with a pluggable transport, `integrations/amazon.py` import / payloads /
+  sync). Documents go out via `adapter.push(kind, file, ref=...)`: file mode keeps the file, API mode defers `core.tasks.amazon_send`
+  on commit. Tests use `FakeAmazon` in `tests/test_amazon_api.py` — never call Amazon from tests.
 - Demo switches: `HUB_DEMO_SIMULATIONS` (simulate SAP/Amazon steps), `HUB_DEV_LOGIN` (user picker), `HUB_DEMO_PASSWORD` (access code),
   `HUB_DJANGO_ADMIN` (false on client-facing hosts: no `/admin/`, no Admin console link).
 - Query-string choices (`tab`, `view`) go through `core.htmx.pick(request, key, allowed, default)` — never index a dict with raw input.

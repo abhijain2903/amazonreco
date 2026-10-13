@@ -44,6 +44,28 @@ def test_f1_confirm_po_with_flagged_lines(as_user):
     assert AuditEvent.objects.filter(entity="po", entity_id=po.po_no, action="confirm").exists()
 
 
+def test_f1_backorder_only_where_amazon_allows_it_and_reject_reason_in_amazons_terms(as_user):
+    """Amazon's PO says per line whether a backorder is accepted (isBackOrderAllowed). Where it is not, the hub refuses
+    the decision and does not offer it; a rejection is acknowledged with one of Amazon's three reasons."""
+    po = PurchaseOrder.objects.filter(stage="new").first()
+    l = po.lines.select_related("sku").first()
+    l.backorder_allowed = False
+    l.save()
+    pic = as_user("faisal")
+    r = pic.post(f"/pos/{po.po_no}/lines/", {f"d-{l.pk}": "backorder"})
+    assert toast(r).get("tone") == "bad" and "does not accept a backorder" in toast(r)["msg"]
+    l.refresh_from_db()
+    assert l.decision != "backorder"
+    html = pic.get(f"/records/po/{po.po_no}/?tab=lines").content.decode()
+    assert f'<option value="backorder"' not in html.split(f'name="d-{l.pk}"')[1].split("</select>")[0]
+    assert "Amazon accepts no backorder on this line" in html
+    pic.post(f"/pos/{po.po_no}/lines/", {f"d-{l.pk}": "reject"})
+    pic.post(f"/pos/{po.po_no}/lines/", {f"r-{l.pk}": "Discontinued"})
+    l.refresh_from_db()
+    assert (l.decision, l.amazon_reject_code) == ("reject", "ObsoleteProduct")
+    assert "Amazon is told: obsolete product" in pic.get(f"/records/po/{po.po_no}/?tab=lines").content.decode()
+
+
 def test_permissions_block_wrong_role(as_user):
     po = PurchaseOrder.objects.filter(stage="new").first()
     r = as_user("khalid").post(f"/pos/{po.po_no}/confirm/")         # Logistics cannot confirm

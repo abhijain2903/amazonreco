@@ -29,10 +29,13 @@ DEFAULTS = [
 
 FIELDS = {
     "amazon_vc": {"modes": ["file", "api", "edi"],
-                  "api": ["Vendor code", "Marketplace", "Client ID", "Client secret", "Refresh token"],
+                  "api": ["Vendor codes", "Ship-from party ID", "VAT number", "Shipment type", "Client ID", "Client secret", "Refresh token"],
                   "edi": ["EDI partner ID", "AS2 ID", "AS2 endpoint URL", "Certificate"],
                   "data": ["Purchase orders (in)", "Remittance / payments (in)", "Debit notes (in)",
-                           "PO acknowledgement (out)", "ASN (out)", "Invoice (out)"]},
+                           "PO acknowledgement (out)", "ASN (out)", "Invoice (out)"],
+                  "data_api": ["Purchase orders, changes and cancellations (in)", "What Amazon received per line (in)",
+                               "PO acknowledgement (out)", "ASN with SSCC cartons (out)", "Invoice and credit note (out)",
+                               "Amazon's answer to each document (in)", "Remittance, debit notes, returns: still by upload (no SP-API for vendors)"]},
     "carrier": {"modes": ["manual"], "data": ["Delivery slot ID and time"]},
     "sap": {"modes": ["file", "odata", "idoc", "bapi"],
             "odata": ["System (S/4HANA or ECC)", "Host URL", "Client", "Username", "Password", "Sales org", "Plant"],
@@ -48,6 +51,13 @@ FIELDS = {
             "data": ["User sign-in", "Role groups"]},
 }
 SECRET_WORDS = ("secret", "password", "token", "certificate")
+# Kept on the server (env file), not in the database, though not secret by name. Value: the env variable.
+SERVER_FIELDS = {("amazon_vc", "Client ID"): "HUB_SPAPI_CLIENT_ID", ("amazon_vc", "Client secret"): "HUB_SPAPI_CLIENT_SECRET",
+                 ("amazon_vc", "Refresh token"): "HUB_SPAPI_REFRESH_TOKEN"}
+HELP = {("amazon_vc", "Vendor codes"): "Comma-separated, e.g. MEAUD, MEVIS. Only POs for these codes are imported; empty = all codes the app may see.",
+        ("amazon_vc", "Ship-from party ID"): "ME's warehouse ID as registered with Amazon (shipFromParty on the ASN).",
+        ("amazon_vc", "VAT number"): "ME's VAT registration number, sent on invoices and credit notes.",
+        ("amazon_vc", "Shipment type"): "TruckLoad, LessThanTruckLoad or SmallParcel (default LessThanTruckLoad)."}
 
 
 def ensure_connectors():
@@ -77,7 +87,7 @@ class Adapter:
             raise NotImplementedError(f"{self.c.name} live pull '{kind}' is not built yet.")
         return []  # File mode: records arrive through the Uploads page.
 
-    def push(self, kind, payload):
+    def push(self, kind, payload, ref=None):
         """File mode: the generated file is downloaded by the user and uploaded to the other system."""
         if self.live:
             raise NotImplementedError(f"{self.c.name} live push '{kind}' is not built yet.")
@@ -93,9 +103,33 @@ class Adapter:
 
 class AmazonVendorCentral(Adapter):
     """Live options: Selling Partner API for vendors (orders, shipments, invoices, transaction status;
-    Saudi marketplace via the EU endpoint) or EDI 850/855/856/810/820 through an EDI provider."""
+    Saudi marketplace via the EU endpoint) or EDI 850/855/856/810/820 through an EDI provider.
+    API mode is built (integrations/amazon.py); EDI is not."""
 
     key = "amazon_vc"
+
+    def test_connection(self):
+        if self.c.mode == "api":
+            from .amazon import test_connection
+            return test_connection()
+        return super().test_connection()
+
+    def push(self, kind, payload, ref=None):
+        """API mode: the document is sent by a background job once the change is saved, so Amazon being slow or down
+        never blocks or undoes the confirmation, ASN or invoice. The file is still kept on the record."""
+        if self.c.mode != "api":
+            return super().push(kind, payload, ref)
+        from django.db import transaction
+
+        from core.tasks import amazon_send
+        transaction.on_commit(lambda: amazon_send.defer(kind=kind, ref=str(ref)))
+        return {"mode": "api", "queued": ref}
+
+    def sync(self):
+        if self.c.mode == "api":
+            from .amazon import sync
+            return sync()
+        return super().sync()
 
 
 class SAP(Adapter):

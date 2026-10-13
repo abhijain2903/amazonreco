@@ -107,7 +107,7 @@ def submit_invoice(user, po_no, version=None):
         ["", "", "", "", "", "VAT 15%", f"{inv.vat_h / 100:.2f}"], ["", "", "", "", "", "Total", f"{inv.total_h / 100:.2f}"]]
     f = save_file("invoice", f"Invoice_{inv.invoice_no}.csv", rows, "po", po.po_no)
     from integrations.connectors import get_adapter
-    get_adapter("amazon_vc").push("invoice", f)
+    get_adapter("amazon_vc").push("invoice", f, ref=inv.invoice_no)
     return inv, f
 
 
@@ -168,7 +168,7 @@ def resubmit_invoice(user, po_no, note="", invoice_no=None):
     audit("po", po.po_no, f"Invoice {inv.invoice_no} corrected and sent again (revision {inv.revision})" + (f": {note}" if note else ""),
           user, action="invoice_resubmit", reason=note or "")
     from integrations.connectors import get_adapter
-    get_adapter("amazon_vc").push("invoice", f)
+    get_adapter("amazon_vc").push("invoice", f, ref=inv.invoice_no)
     return inv, f
 
 
@@ -198,7 +198,9 @@ def issue_credit_memo(user, po_no, amount_h, reason, memo_no="", invoice_no=None
     m = CreditMemo.objects.create(invoice=inv, memo_no=memo_no, amount_h=amount_h, reason=reason, by_name=user.name)
     audit("po", po.po_no, f"Credit memo {memo_no} for {fmt_sar(amount_h)} against {inv.invoice_no}: {reason}", user, action="credit_memo", reason=reason)
     rows = [["credit_memo_no", "invoice_no", "po_no", "amount_sar", "reason"], [memo_no, inv.invoice_no, po.po_no, f"{amount_h / 100:.2f}", reason]]
-    save_file("credit_memo", f"Credit_memo_{memo_no}.csv", rows, "po", po.po_no)
+    f = save_file("credit_memo", f"Credit_memo_{memo_no}.csv", rows, "po", po.po_no)
+    from integrations.connectors import get_adapter
+    get_adapter("amazon_vc").push("credit_note", f, ref=memo_no)
     paid = Payment.objects.filter(invoice=inv, status__in=COUNTED).aggregate(s=Sum("paid_h"))["s"] or 0
     if engine.payment_match(paid, inv.net_due_h, get_cfg()) == "matched" and paid:
         for p in Payment.objects.filter(invoice=inv, status="short"):

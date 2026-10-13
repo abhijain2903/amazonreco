@@ -104,3 +104,46 @@ def daily_digest(timestamp: int):
         if items:
             mail.send(u.email, f"Vendor Hub: {len(items)} items need you today",
                       "\n".join(f"- {i['title']}" for i in items[:20]))
+
+
+# ---------- Amazon SP-API (integrations/amazon.py) ----------
+@app.task(queue="amazon", retry=3)
+def amazon_send(kind: str, ref: str):
+    """Send one acknowledgement / ASN / invoice / credit note to Amazon (queued when the change was saved)."""
+    from integrations import amazon
+    if not amazon.is_live():
+        return
+    amazon.send(kind, ref)
+
+
+@app.task(queue="amazon", retry=3)
+def amazon_submit(transaction_pk: str):
+    """Submit a transaction that was queued again (resend after Amazon refused it)."""
+    from integrations import amazon
+    from integrations.models import AmazonTransaction
+    t = AmazonTransaction.objects.filter(pk=transaction_pk, status="queued").first()
+    if t and amazon.is_live():
+        amazon.submit(t)
+
+
+EVERY = {"Every 15 minutes": 15, "Hourly": 60, "Daily at 06:00": 24 * 60}
+
+
+@app.periodic(cron="*/15 * * * *")
+@app.task(queue="schedule")
+def amazon_sync(timestamp: int):
+    """Pull new and changed POs and receipts from Amazon and check sent documents, on the connector's schedule."""
+    from datetime import timedelta
+
+    from integrations import amazon
+    from integrations.spapi import Client
+    if not amazon.is_live() or not Client.configured():
+        return
+    c = amazon.connector()
+    every = EVERY.get(c.settings.get("schedule"), 15)
+    now = timezone.now()
+    if every == 24 * 60 and timezone.localtime(now).hour != 6:
+        return
+    if c.last_sync and now - c.last_sync < timedelta(minutes=every - 2):
+        return
+    amazon.sync()

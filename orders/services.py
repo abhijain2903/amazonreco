@@ -15,7 +15,7 @@ REASONS = {
     "accept": ["", "Override: new price agreed with buyer", "Override: difference accepted"],
     "partial": ["Limited stock", "Case-pack rounding", "Other"],
     "backorder": ["Backordered: stock expected", "Backordered: in transit from supplier", "Other"],
-    "reject": ["Cost differs from agreed price", "Out of stock", "Discontinued", "Other"],
+    "reject": ["Cost differs from agreed price", "Out of stock", "Discontinued", "Not our product / wrong ASIN", "Other"],
 }
 
 
@@ -81,6 +81,8 @@ def _apply_decision(l, d):
     """Quantities that follow from a decision: accept all, partial (the rest is cancelled), backorder (ship what is in
     stock now, the rest later) or reject."""
     from datetime import date
+    if d == "backorder" and not l.backorder_allowed:
+        raise CommandError(f"{l.sku.model_no}: Amazon does not accept a backorder on this line. Confirm what ships now (Partial) or reject it.")
     l.decision = d
     if d == "accept":
         l.qty_confirmed, l.qty_backorder = l.qty_ordered, 0
@@ -242,7 +244,7 @@ def confirm_po(user, po_no, version=None):
          l.backorder_eta.isoformat() if l.qty_backorder and l.backorder_eta else "", status[l.decision], l.reason] for l in lines]
     f = save_file("po_ack", f"PO_ack_{po.po_no}.csv", rows, "po", po.po_no)
     from integrations.connectors import get_adapter
-    get_adapter("amazon_vc").push("po_ack", f)
+    get_adapter("amazon_vc").push("po_ack", f, ref=po.po_no)
     refresh_open_pos()
     return po, f
 
@@ -382,10 +384,12 @@ def close_backorder(user, po_no, reason, version=None):
 
 
 @transaction.atomic
-def amazon_change(user, po_no, new_qty, cancel=False, reason="", window_end=None, version=None, source="the hub"):
+def amazon_change(user, po_no, new_qty, cancel=False, reason="", window_end=None, version=None, source="the hub", name=None):
     """Amazon cut quantities, cancelled lines or the whole PO, or moved the ship window — before the ASN goes.
-    new_qty: {line id or sku_code: qty}; 0 cancels a line. Confirmed quantities never exceed what Amazon still wants."""
-    require(user, "confirm")
+    new_qty: {line id or sku_code: qty}; 0 cancels a line. Confirmed quantities never exceed what Amazon still wants.
+    user=None with a name: a change pulled from Amazon's API (no person behind it)."""
+    if user is not None:
+        require(user, "confirm")
     po = get_po(po_no, lock=True)
     check_version(po, version)
     if po.stage not in CHANGEABLE:
@@ -411,7 +415,7 @@ def amazon_change(user, po_no, new_qty, cancel=False, reason="", window_end=None
         po.bump()
         po.save()
         audit("po", po.po_no, f"Amazon cancelled the rest of the PO: {cut:,} units will not ship" + (f". {reason}" if reason else ""),
-              user, action="amazon_cancel", reason=reason)
+              user, name=name, system=user is None, action="amazon_cancel", reason=reason)
         from payments.services import settle_po
         settle_po(po)
         refresh_open_pos()
@@ -423,7 +427,7 @@ def amazon_change(user, po_no, new_qty, cancel=False, reason="", window_end=None
         po.bump()
         po.save()
         audit("po", po.po_no, "PO cancelled by Amazon" + (f": {reason}" if reason else "") +
-              (f". Cancel SAP sales order {po.sap_order_no}" if po.sap_order_no else ""), user, action="amazon_cancel",
+              (f". Cancel SAP sales order {po.sap_order_no}" if po.sap_order_no else ""), user, name=name, system=user is None, action="amazon_cancel",
               reason=reason, before={"stage": before}, after={"stage": "cancelled"})
         refresh_open_pos()
         return po, ["PO cancelled"]
@@ -478,7 +482,7 @@ def amazon_change(user, po_no, new_qty, cancel=False, reason="", window_end=None
     if moved:
         text += ("; " if text else "") + f"ship window now ends {timezone.localtime(window_end):%d %b}"
     audit("po", po.po_no, f"Amazon changed the PO ({source}): {text}" + (f". {reason}" if reason else ""), user,
-          action="amazon_change", reason=reason, after={"lines": changes})
+          name=name, system=user is None, action="amazon_change", reason=reason, after={"lines": changes})
     if po.stage != "new" and changes:
         notify(f"Amazon changed PO {po.po_no} after confirmation: {text}", "warn", ("po", po.po_no, "lines"))
     refresh_open_pos()
@@ -496,6 +500,12 @@ def _create_po_for_seed(po_no, fc, order_date, sku, qty):
     audit("po", po_no, "PO received from Amazon (1 line) via file upload", name="Vendor Central import", system=True, action="import",
           at=order_date + timedelta(hours=1))
     return po
+
+
+def default_confirm_by(order_date):
+    """When the hub expects a new PO to be acknowledged: two days after Amazon placed it, and never less than six
+    hours from now (a PO that arrives late still gets a working window)."""
+    return max(order_date + timedelta(days=2), timezone.now() + timedelta(hours=6))
 
 
 def create_po(po_no, fc, order_date, confirm_by, lines, *, window_start=None, window_end=None, user=None,

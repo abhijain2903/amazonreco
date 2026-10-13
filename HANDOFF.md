@@ -45,7 +45,8 @@ R12 = global tolerance (SAR 1). BRD worked example used in seed and tests: 180 u
   Earlier options (Next.js/Prisma, Drizzle) were dropped.
 - Modular monolith: one Django app per business area; services layer shared by screens and the JSON API.
 - Money in integer halalas; Asia/Riyadh; append-only audit trail enforced by a DB trigger; optimistic locking via `version`.
-- File mode first: every source works by upload (U1-U10) and generated files; live connectors are adapter stubs.
+- File mode first: every source works by upload (U1-U12) and generated files. Amazon Vendor Central also has a working
+  SP-API connector (switched on per server); the other live connectors are adapter stubs.
 - Demo mode (`HUB_DEMO_SIMULATIONS=true`) simulates SAP order/delivery/billing and Amazon sold units so every flow clicks through.
 - Delivery via GitHub repo `abhijain2903/amazonreco` (the Claude GitHub app now has push access).
 
@@ -80,8 +81,16 @@ R12 = global tolerance (SAR 1). BRD worked example used in seed and tests: 180 u
 - ME's three trackers (PO tracker per booking portion, sell-out tracker from Amazon sales / inventory / forecast reports via
   U11 / U12, claim tracker) as dashboard tabs with ME's exact columns and Excel export (`core/trackers.py`). RFPO per PO,
   sales order per booking portion, RRP and model status on SKUs, Salesforce MECL ref / second ref / sub-category on promotions.
-- Tests: `pytest` → 270 passed (rules, flows, uploads U1-U10, API, access matrix, matching, defects, phases A–C, review
-  regressions, smoke). Playwright e2e: 17 passed against a running seeded server (`test_ui` + `test_scenarios`, the real-world cases).
+- Amazon SP-API connector (13 Oct 2026, `integrations/spapi.py` client + `integrations/amazon.py` mapping): Vendor Orders
+  (new / changed / cancelled POs every 15 min, receipts per line), acknowledgement with Amazon's codes (accepted / backordered
+  where `isBackOrderAllowed` / rejected with one of Amazon's three reasons, cases kept as cases), ASN with SSCC cartons,
+  invoice and credit note with VAT, and each document's Amazon answer (transaction status) shown on the connector with
+  "Send again". Sends run as background jobs after the change is saved. Credentials only in the server env file
+  (`HUB_SPAPI_CLIENT_ID / _CLIENT_SECRET / _REFRESH_TOKEN`, optional `HUB_SPAPI_SANDBOX=true`); vendor codes, ship-from ID
+  and VAT number on the connector. Backfill: `mehub-manage amazon_sync --days 180`. Tested against a fake Amazon only —
+  **not yet against Amazon** (needs ME's app and refresh token).
+- Tests: `pytest` → 286 passed (rules, flows, uploads U1-U12, API, access matrix, matching, defects, phases A–C, review
+  regressions, trackers, Amazon SP-API, smoke). Playwright e2e: 18 passed against a running seeded server (`test_ui` + `test_scenarios`, the real-world cases).
 - Reports page: six tabs (summary with period-on-period and money leaked/protected, orders & stock, shipping, cash &
   deductions, promotions, team speed), 12-week trends, one-workbook export. Demo seed adds realistic history for it.
 - Packaging: Dockerfile (`bin/start.sh`: migrate → optional seed → optional worker → gunicorn/uvicorn on `$PORT`),
@@ -115,9 +124,13 @@ Live since 28 Sep 2026 at **https://amazonhub.iksulalive.com** on AWS EC2 `i-00c
    default 60), real Amazon.sa FC codes and vendor codes, this year's Eid holidays (Settings → Calendar), freight terms
    (prepaid / collect), budgets per category or per brand.
 2. UAT data: ME's real SKU master (U1) and price list (U2), then the go-live guide on Uploads.
-3. Live integrations behind the existing adapters (`integrations/connectors.py`): Amazon SP-API for vendors (orders,
-   shipments, invoices + Invoices API status, Finance Remittance API, returns, vendor sales report) or EDI; SAP OData (S/4)
-   or IDoc/BAPI (ECC); Salesforce order log; Microsoft 365 / SMTP email for alerts.
+3. Amazon SP-API go-live: ME's admin registers a private app in Vendor Central (roles: Amazon Fulfillment / Inventory and
+   Order Tracking; Brand Analytics for reports), authorises it for every vendor code, gives the client ID / secret /
+   refresh token for `/etc/mehub/mehub.env`; then Test connection, try `HUB_SPAPI_SANDBOX=true` first, set vendor codes,
+   ship-from party ID and VAT number, switch the connector to API, run `amazon_sync --days 180`. Still by upload: remittance,
+   debit notes, returns (no vendor SP-API for them). Next: Reports API for U11 / U12 (sales, inventory, forecast).
+   Other live integrations behind the adapters (`integrations/connectors.py`): SAP OData (S/4) or IDoc/BAPI (ECC);
+   Salesforce order log; Microsoft 365 / SMTP email for alerts.
 4. Small follow-ups: one-click "Add to SKU master" from a rejected PO row; partial credit release if ME uses it.
 5. Production hardening: CI (GitHub Actions running pytest against Postgres), S3 for media (`STORAGES`), backups,
    Sentry/logging, API rate limits, vendor Swagger UI assets locally, Entra ID sign-in against ME's tenant.
@@ -155,10 +168,11 @@ rules/         engine.py (R1-R12 pure functions), RuleConfig + services
 catalog/ orders/ fulfilment/ billing/ payments/ promotions/ debitnotes/ claims/ returns/   business apps
 matching/      suggestion features, matchers, AI providers, encrypted key, settings
 uploads/       types.py (U1-U10), services.py (parse → map → preview → commit), views
-integrations/  connectors.py (adapters), models (Connector, SyncRun), views
+integrations/  connectors.py (adapters), spapi.py (SP-API client), amazon.py (PO import, documents out, sync),
+               models (Connector, SyncRun, AmazonTransaction), views, management command amazon_sync
 templates/     pages/ records/ dialogs/ partials/ registration/
 static/        css/hub.css, js/hub.js, js/htmx.min.js, js/alpine.min.js
 tests/         conftest (seeds once per session), test_rules, test_flows, test_uploads, test_api, test_access, test_matching,
-               test_defects, test_phase_a/b/c, test_smoke, e2e/test_ui
+               test_defects, test_phase_a/b/c, test_trackers, test_amazon_api (fake Amazon), test_smoke, e2e/test_ui
 bin/start.sh   container entrypoint · Dockerfile · docker-compose.yml · render.yaml · .env.example
 ```

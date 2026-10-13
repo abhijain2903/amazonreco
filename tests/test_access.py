@@ -56,6 +56,12 @@ def suggestion():
     return str(ms.refresh("pay_inv", p)[0].pk)
 
 
+def amazon_tx():
+    from integrations.models import AmazonTransaction
+    t = AmazonTransaction.objects.create(kind="po_ack", po_no=po("confirmed"), ref=po("confirmed"), status="failure")
+    return str(t.pk)
+
+
 def connector():
     from integrations.connectors import ensure_connectors
     from integrations.models import Connector
@@ -120,6 +126,7 @@ ACTIONS = {
     "integrations.save": ("settings", lambda: f"/integrations/{connector()}/save/", {"mode": "file"}),
     "integrations.test": ("settings", lambda: f"/integrations/{connector()}/test/", {}),
     "integrations.sync": ("settings", lambda: f"/integrations/{connector()}/sync/", {}),
+    "integrations.amazon_resend": ("settings", lambda: f"/integrations/amazon/tx/{amazon_tx()}/resend/", {}),
     "settings.rule": ("settings", lambda: "/settings/rules/R12/", {"field": "abs", "value": "1"}),
     "settings.fc_add": ("settings", lambda: "/settings/fcs/add/", {"code": "TST-FC1", "name": "Test"}),
     "settings.vendor_code": ("settings", lambda: "/settings/vendor-codes/add/", {"code": "TESTVC"}),

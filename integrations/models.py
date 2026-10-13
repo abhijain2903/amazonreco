@@ -23,7 +23,17 @@ class Connector(Base):
 
     @property
     def status_label(self):
+        if (self.key, self.mode) == ("amazon_vc", "api"):
+            from .spapi import Client
+            return "Live · SP-API" if Client.configured() else "API · credentials missing"
         return {"file": "File mode", "manual": "Manual entry", "off": "Not connected"}.get(self.mode, "Configured · not live")
+
+    @property
+    def tone(self):
+        if (self.key, self.mode) == ("amazon_vc", "api"):
+            from .spapi import Client
+            return "ok" if Client.configured() else "bad"
+        return {"file": "info", "manual": "", "off": ""}.get(self.mode, "warn")
 
 
 class SyncRun(Base):
@@ -37,3 +47,29 @@ class SyncRun(Base):
 
     class Meta:
         ordering = ["-finished_at"]
+
+
+class AmazonTransaction(Base):
+    """One document sent to Amazon through the Selling Partner API (acknowledgement, ASN, invoice, credit note).
+    Amazon answers each submission with a transaction ID and processes it later; the hub polls its status."""
+
+    KINDS = [("po_ack", "PO acknowledgement"), ("asn", "ASN"), ("invoice", "Invoice"), ("credit_note", "Credit note")]
+    STATUSES = [("queued", "Queued"), ("processing", "With Amazon"), ("success", "Accepted"), ("failure", "Refused by Amazon"),
+                ("error", "Not sent")]
+    kind = models.CharField(max_length=12, choices=KINDS)
+    po_no = models.CharField(max_length=20, db_index=True)
+    ref = models.CharField(max_length=30, help_text="PO, ASN, invoice or credit memo number")
+    transaction_id = models.CharField(max_length=64, blank=True, db_index=True)
+    status = models.CharField(max_length=10, choices=STATUSES, default="queued", db_index=True)
+    errors = models.JSONField(default=list, blank=True)
+    payload = models.JSONField(default=dict, blank=True)
+    attempts = models.PositiveIntegerField(default=0)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    checked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    @property
+    def error_text(self):
+        return "; ".join(f"{e.get('code', '')}: {e.get('message', '')}".strip(": ") for e in self.errors)[:300]
